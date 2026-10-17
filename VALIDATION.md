@@ -37,3 +37,11 @@ The compact Windows index passed SQLite quick_check and preserved 38,576 emails,
 - Bounded live Outlook acceptance extracted one existing attachment into a separate local test index, embedded its text and retrieved it with hybrid search without fallback. The guard observed only native PowerShell, Python and Node child invocations: zero WSL calls, zero temporary raw files remaining. No mailbox fixture was created or sent.
 - MCP retains exactly five read-only tools. The administrative attachment export script is not part of its bridge operation allowlist or tool registry. Real MCP STDIO acceptance is repeated against the existing production index.
 - The new attachment pipeline has been validated on a bounded live sample, not a full-mailbox attachment backfill. Imported historical attachment text remains intact until explicitly re-synced; skipped formats, encryption, limits and no-text/OCR cases are reported separately. Native attachment state is preserved by compact migration.
+
+## Historical backfill and first stdio hybrid query
+
+The subsequent native historical attachment backfill covers the existing local index, not every item in the mailbox. Detailed counts, extraction exceptions, search examples and consistent index backups remain in ignored local artifacts. No mailbox contents, attachment filenames or queries are published.
+
+Acceptance exposed a Windows Python 3.14 startup deadlock: the first hybrid/vector MCP request loaded NumPy's native extension after stdio worker threads had started. Direct CLI retrieval did not reproduce it. NumPy now initializes before the MCP transport starts; tool names, read-only permissions and OpenClaw interfaces are unchanged. A fresh-process stdio regression exercises the first hybrid request without requiring Outlook or a downloaded model. Existing clients must reload the MCP connection to load this code change.
+
+The expanded 24-test native Windows suite passed. Real stdio requests using the registered client command retrieved three distinct historical attachments through lexical and hybrid search, with vector-only retrieval also verified. SQLite/FTS integrity, chunk-to-vector coverage and unchanged incremental-sync behavior passed against the local backfill. These are protocol and local-data checks; an existing desktop connection still needs a reload, and an in-chat invocation is not claimed.

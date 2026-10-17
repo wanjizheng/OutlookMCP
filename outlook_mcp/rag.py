@@ -10,6 +10,10 @@ import subprocess
 from contextlib import contextmanager
 from pathlib import Path
 
+import numpy as np
+
+# Load native libraries before MCP starts its stdio reader threads. On Windows,
+# importing NumPy for the first time inside a running tool can deadlock in DLL init.
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -127,8 +131,6 @@ def search(query, top=8, mode="hybrid"):
         fallback = None
         if mode != "bm25":
             try:
-                import numpy as np
-
                 q = np.asarray(embed([query])[0], dtype=np.float32)
                 q = q / max(float(np.linalg.norm(q)), 1e-12)
                 best = []
@@ -302,8 +304,6 @@ def embed_pending(limit=200):
     """Fill native-sync vectors locally; never called implicitly by MCP tools."""
     if not 1 <= limit <= 100000:
         raise ValueError("Invalid embedding limit")
-    import numpy as np
-
     done = 0
     with connect(False) as c:
         pending = c.execute(
