@@ -169,3 +169,49 @@ completes ordinary Chat retrieval + preview/stop + ChatGPT-native approval +
 no-send confirmation acceptance for the final implementation. Real delivery is
 still intentionally not claimed. Credentials, mailbox evidence, account IDs,
 private chat links and screenshots remain excluded from the public commit.
+
+## Windows logon startup and recovery (2026-10-17)
+
+Installed a native Scheduled Task for the current interactive Windows user at
+limited privilege, without storing a Windows password. Read back its logon
+trigger, indefinite one-minute repetition trigger, IgnoreNew instance policy,
+unlimited execution duration, battery settings and explicit opt-in send argument.
+The task invokes the checkout's pythonw supervisor, not WSL. The existing local
+STDIO clients and OpenClaw deployment remain untouched. The ChatGPT plugin's
+ask-before-write setting and full-preview/subsequent-user-turn confirmation
+contract remain unchanged; no real email was sent.
+
+Live recovery checks:
+
+- Killed only the owned tunnel/backend process tree. The supervisor relaunched
+  it after the configured backoff; the loopback endpoint returned `ready` again.
+- Stopped the owned task and verified that its supervisor and tunnel processes
+  were gone. Restart restored the service. Windows Job Object ownership prevents
+  abandoned descendants; a second supervisor invocation exited without spawning
+  a second tunnel.
+- Force-killed the supervisor. RestartOnFailure alone did not requeue this
+  manually started task during the observation window. Added the independent
+  one-minute trigger, repeated the failure, and observed a different supervisor
+  PID and a live `ready` response after the next scheduled trigger.
+- After recovery, the connected cloud ChatGPT plugin successfully called
+  `outlook_status` (native Windows/RAG, no WSL) and retrieved the known historical
+  attachment evidence with `search_email`. Transitional requests included an
+  initialization error and, after a later restart, one timeout; subsequent reads
+  succeeded. Explicit STDIO initialized notification is now enabled. This does
+  not promise uninterrupted calls or authorize replaying write operations.
+
+The first supervisor startup exposed a pywin32 unnamed-job argument mismatch;
+corrected it before the successful live checks. Local lifecycle diagnostics,
+PIDs and private result data remain under ignored `artifacts/`.
+
+The 180-second unready grace, capped exponential retry, successful-probe reset,
+loopback-only probe, HTTP failure handling, owned-child termination and default
+read-only/explicit-send tunnel bootstrap have regression coverage. Real STDIO
+mail/calendar/RAG smoke passed with the original five read tools, including
+rejection of an unavailable send tool. Actual reboot/logoff, physical network
+disconnection and real mail delivery were not performed; logon trigger settings,
+scheduled recovery and process-failure recovery were verified on the running PC.
+All 39 Windows regression tests passed, as did dependency consistency, generated
+bridge reproducibility and whitespace checks. Stop now disables the periodic
+trigger as well as terminating the task; Restart re-enables it. Runtime state
+and credentials are excluded from the commit.

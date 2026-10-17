@@ -30,6 +30,13 @@ By default no write tools are exposed. Setting `OUTLOOK_MCP_ENABLE_SEND=1` adds 
 
 See [ordinary Chat / private tunnel setup](INSTALL.md#7-普通-chatgpt-对话私有隧道和可选发送) for the distinct plugin connection. A successful local MCP call does not prove that ordinary Chat has the plugin installed.
 
+For unattended daily use, `scripts/autostart.ps1 -Action Install` registers a
+password-free, least-privilege Windows logon task. Add `-EnableSend` only when
+explicitly requested; the ChatGPT confirmation requirement remains in force.
+The hidden native supervisor checks readiness, restarts failed/unready transports
+with bounded backoff, and cleans up the owned process tree. It never retries
+email submissions. See INSTALL.md for status, restart and uninstall commands.
+
 ## Storage
 
 Code and dependencies live in this checkout. Personal index files are under `data/`, model under `models/`, and private diagnostics/config backups under `artifacts/`; all are excluded from Git. `OUTLOOK_MCP_DATA_DIR` can point to another local SSD directory. The installer restricts default data directories to the current user and SYSTEM. A different configured data directory must be protected separately.

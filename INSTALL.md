@@ -187,7 +187,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\install_tunnel.p
 .\.venv\Scripts\python.exe scripts\setup_tunnel.py run --enable-send
 ```
 
-保持该终端和当前 Windows 用户桌面会话开启，关闭终端会断开隧道。
+以上是手动前台运行方式，关闭终端会断开隧道；日常使用推荐下面的自动启动方式。
+两种方式只能选一个，安装自动启动前先关闭本项目手动启动的隧道，避免重复连接。
 本机健康检查地址写入 `artifacts/tunnel-client/health.url`，仅监听 127.0.0.1。
 检查该地址的 `/readyz` 和 `/ui`，确认 ready 后再添加插件。不要开启远程 admin UI、
 原始 HTTP/payload 日志，也不要把仅进程已启动当成隧道就绪。
@@ -243,3 +244,63 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\install_tunnel.p
 更新代码后停止并重启本项目的隧道进程、刷新插件工具；不要停止其他客户端聊天。
 禁用发送时去掉 `--enable-send` 并重启，默认只读连接保持原样。卸载时先断开插件和
 隧道，再按用户授权撤销专用密钥及删除隧道；不要删除 RAG/模型或恢复整份旧配置。
+
+### Windows 登录后自动启动、断线恢复
+
+在已完成隧道配置、DPAPI 密钥保存的同一 Windows 用户下，用**普通权限**终端执行：
+
+```powershell
+# 在仓库根目录执行；仅在用户明确要求发送能力时加 -EnableSend
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\autostart.ps1 -Action Install -EnableSend
+# 只读自动启动则省略 -EnableSend；重新 Install 可切换模式
+```
+
+安装会立即启动并创建当前用户专属的 Windows 计划任务，登录时触发，另有每分钟
+一次的启动检查（已有实例时忽略，不会重复启动）。
+无需管理员权限，不保存 Windows 密码；以 Interactive / Limited 运行，不使用 SYSTEM
+或“用户未登录也运行”，确保 Outlook COM 和当前用户 DPAPI 可用。后端由官方隧道
+按需启动，复用原 Windows RAG、模型和脚本；不调用 WSL，不另开服务器或公开端口。
+安装不会修改 ChatGPT 插件的 `ask_before_writes` 权限。发送仍需展示完整邮件，等待
+后续用户明确确认，并在 ChatGPT 的写操作审批卡片选择 **Allow once**。
+
+任务在后台无控制台运行，无需保留终端；在电池供电时也允许运行，无执行时长限制。
+守护程序每 10 秒检查 loopback `/readyz`：进程退出会重新启动，连续 180 秒未就绪
+则重建隧道及其后端，重启间隔从 5 秒退避至最多 5 分钟。守护程序异常退出时，
+Windows 任务计划程序每分钟检查并重新启动；额外配置失败后每分钟重试（最多
+999 次），不单独依赖该失败重试机制。重复启动还会被单实例锁阻止。
+进程树使用 Windows Job Object 管理，停止任务不会留下旧隧道/后端进程。
+隧道启动时显式启用 STDIO `notifications/initialized`，确保新建的后端完成 MCP 握手。
+
+恢复仅重连传输，**不重试邮件发送**。后端重启会丢失内存里的准备记录；需要重新
+准备并逐封确认。发送结果不明时先检查 Outlook，不能因重连自动重发。电脑关机、
+睡眠、用户注销、网络不可用期间不能服务；登录/唤醒且网络恢复后自动恢复。
+密钥过期或撤销需要重新录入 `store-key` 并 Restart，自动重试不能修复无效凭据。
+重连过渡期已有 ChatGPT 调用可能返回初始化错误或超时；待 ready 后可重新发起读取。
+不要因此自动重试发送；已准备的邮件也可能因后端会话更换而需要重新准备和确认。
+
+管理命令（在仓库根目录）：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\autostart.ps1 -Action Status
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\autostart.ps1 -Action Restart
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\autostart.ps1 -Action Stop
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\autostart.ps1 -Action Uninstall
+```
+
+`Stop` 停止并禁用自动启动，直到 `Restart` 或重新 `Install`；`Uninstall` 只移除本项目任务，
+不删除凭据、模型、RAG 或插件。移动仓库前先 Uninstall，在新位置重新 Install。
+任务名按 Windows 用户 SID 区分，发现同名任务属于另一目录时会拒绝覆盖。
+
+`Status` 的 Running 仅表示守护程序在运行；确认隧道实际 ready：
+
+```powershell
+$health = (Get-Content artifacts\tunnel-client\health.url -Raw).Trim()
+Invoke-WebRequest "$health/readyz"
+Get-Content artifacts\tunnel-client\watchdog-status.json
+Get-Content artifacts\tunnel-client\watchdog.log -Tail 20
+```
+
+状态文件有最近检查时间、进程号和重启计数，停止后可能陈旧，应同时核对任务状态
+和 live `/readyz`。守护日志仅记录进程生命周期/就绪状态，不记录邮件、密钥或请求，
+每份 256 KiB，最多保留当前及两份轮转日志。所有运行文件留在 Git 忽略的
+`artifacts/tunnel-client/`。不要开启原始 HTTP/payload 调试日志。

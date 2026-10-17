@@ -79,7 +79,8 @@ def main():
         if args.action == "doctor":
             argv += ["--explain"]
         else:
-            argv += ["--health.url-file", str(PRIVATE / "health.url")]
+            argv += ["--health.url-file", str(PRIVATE / "health.url"),
+                     "--mcp.stdio-send-initialized-notification"]
     # Foreground daemon: keep this terminal running for discovery and calls.
     # No secrets in command line, YAML, stdout, or chat.
     raise SystemExit(subprocess.call(argv, cwd=ROOT, env=env))
