@@ -23,10 +23,17 @@ The Windows runtime invokes native PowerShell/Node and reads a local Windows ind
 
 ## Coverage limits
 
-An imported index preserves existing indexed text and vectors; it does not prove that the old mailbox scan covered every message. The corrected full backfill can repair prior omissions. Native sync currently adds message body text; imported attachment text remains searchable, while new attachment extraction is a documented limitation. Mailbox deletion/move reconciliation and automatic ChatGPT memory are not claimed.
+An imported index preserves existing indexed text and vectors; it does not prove that the old mailbox scan covered every message. The corrected full backfill can repair prior omissions. Native sync now adds supported new attachment text as described below. Mailbox deletion/move reconciliation, OCR and automatic ChatGPT memory are not claimed.
 
 The first migration used a full consistent SQLite backup. Full verification on the cross-filesystem snapshot was slow; that owned validation process was stopped, and a native compact conversion preserves retrieval data and verifies the final native database. The redundant intermediate snapshot is cleaned only after final acceptance.
 
 ## Final native index acceptance
 
 The compact Windows index passed SQLite quick_check and preserved 38,576 emails, 111,031 chunks and 111,031 valid vectors. Its main database is 993,718,272 bytes versus the consistent legacy snapshot at 4,954,951,680 bytes (about 80% smaller). On the final Windows index, hybrid retrieval returned results with no fallback. These counts describe the imported snapshot, not total mailbox coverage.
+
+## Native attachment extraction follow-up
+
+- Windows suite expanded to 23 tests, covering all seven supported formats, encrypted/no-text/corrupt PDFs, page/text/file/ZIP expansion limits, DTD rejection, duplicate/path-like filenames, export count/type limits, temporary cleanup, unchanged-body backfill, content changes, body-only preservation, and failed-page checkpoint rollback.
+- Bounded live Outlook acceptance extracted one existing attachment into a separate local test index, embedded its text and retrieved it with hybrid search without fallback. The guard observed only native PowerShell, Python and Node child invocations: zero WSL calls, zero temporary raw files remaining. No mailbox fixture was created or sent.
+- MCP retains exactly five read-only tools. The administrative attachment export script is not part of its bridge operation allowlist or tool registry. Real MCP STDIO acceptance is repeated against the existing production index.
+- The new attachment pipeline has been validated on a bounded live sample, not a full-mailbox attachment backfill. Imported historical attachment text remains intact until explicitly re-synced; skipped formats, encryption, limits and no-text/OCR cases are reported separately. Native attachment state is preserved by compact migration.

@@ -42,6 +42,7 @@ def initialize(path=None):
     with connect(False, path) as c:
         c.executescript("""CREATE TABLE IF NOT EXISTS emails(entry_id TEXT PRIMARY KEY,stable_key TEXT,subject TEXT,sender TEXT,sender_email TEXT,received_time TEXT,body TEXT,updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS native_attachment_state(entry_id TEXT PRIMARY KEY,signature TEXT NOT NULL,records_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS email_chunks(chunk_id INTEGER PRIMARY KEY AUTOINCREMENT,entry_id TEXT NOT NULL,chunk_index INTEGER NOT NULL,subject TEXT,sender TEXT,received_time TEXT,chunk_text TEXT NOT NULL,text_hash TEXT NOT NULL,embedding_json TEXT,embedding_norm REAL,updated_at TEXT NOT NULL,UNIQUE(entry_id,chunk_index));
 CREATE TABLE IF NOT EXISTS email_chunk_vectors(chunk_id INTEGER PRIMARY KEY,dimensions INTEGER NOT NULL,embedding_f32 BLOB NOT NULL,updated_at TEXT NOT NULL);
 CREATE VIRTUAL TABLE IF NOT EXISTS email_chunks_fts USING fts5(entry_id UNINDEXED,chunk_id UNINDEXED,subject,sender,received_time UNINDEXED,chunk_text,tokenize='unicode61');""")
@@ -221,7 +222,29 @@ def ingest(rows, conn):
         old = conn.execute(
             "SELECT body,subject FROM emails WHERE entry_id=?", (eid,)
         ).fetchone()
-        if old and old["body"] == body and old["subject"] == subject:
+        previous = conn.execute(
+            "SELECT signature,records_json FROM native_attachment_state WHERE entry_id=?",
+            (eid,),
+        ).fetchone()
+        records = r.get("_AttachmentRecords")
+        if records is None:
+            records = json.loads(previous["records_json"]) if previous else []
+        serialized = json.dumps(records, sort_keys=True, ensure_ascii=False)
+        signature = hashlib.sha256(serialized.encode()).hexdigest()
+        same_attachments = (
+            previous["signature"] == signature if previous else not records
+        )
+        if "_AttachmentRecords" in r:
+            conn.execute(
+                "INSERT OR REPLACE INTO native_attachment_state VALUES(?,?,?)",
+                (eid, signature, serialized),
+            )
+        if (
+            old
+            and old["body"] == body
+            and old["subject"] == subject
+            and same_attachments
+        ):
             continue
         conn.execute(
             "DELETE FROM email_chunk_vectors WHERE chunk_id IN (SELECT chunk_id FROM email_chunks WHERE entry_id=?)",
@@ -243,6 +266,14 @@ def ingest(rows, conn):
             ),
         )
         content = subject + "\n" + body
+        for record in records:
+            if record.get("status") == "ok" and record.get("text"):
+                content += (
+                    "\n\nAttachment: "
+                    + str(record.get("name", ""))[:256]
+                    + "\n"
+                    + record["text"][:12000]
+                )
         for index, start in enumerate(range(0, len(content), 750)):
             text = content[start : start + 900]
             cid = conn.execute(

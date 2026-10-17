@@ -5,7 +5,7 @@ import json
 import os
 from contextlib import contextmanager
 
-from . import bridge, rag
+from . import attachments, bridge, rag
 
 
 @contextmanager
@@ -32,12 +32,12 @@ def writer_lock():
             msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
 
 
-def sync(folders, hours, pages, resume=False):
+def sync(folders, hours, pages, resume=False, with_attachments=True):
     with writer_lock():
-        return _sync(folders, hours, pages, resume)
+        return _sync(folders, hours, pages, resume, with_attachments)
 
 
-def _sync(folders, hours, pages, resume=False):
+def _sync(folders, hours, pages, resume=False, with_attachments=True):
     if resume and hours:
         raise ValueError(
             "Use --hours 0 with --resume for a stable full backfill window"
@@ -52,8 +52,22 @@ def _sync(folders, hours, pages, resume=False):
             ).fetchone()
             cursor = saved[0] if resume and saved else ""
             total = 0
+            attachment_counts = {}
             for _ in range(pages):
                 page = bridge.list_mail(folder, 100, hours, cursor, max_chars=100000)
+                if with_attachments:
+                    for row in page["items"]:
+                        records = attachments.collect(row, rag.db_path().parent)
+                        for record in records:
+                            status = record["status"]
+                            attachment_counts[status] = (
+                                attachment_counts.get(status, 0) + 1
+                            )
+                        if any(r["status"] in attachments.FATAL for r in records):
+                            raise RuntimeError(
+                                "Attachment extraction failed; page and cursor not committed. Retry this sync or explicitly use --no-attachments."
+                            )
+                        row["_AttachmentRecords"] = records
                 with c:
                     rag.ingest(page["items"], c)
                     if page["next_cursor"] and hours == 0:
@@ -69,7 +83,11 @@ def _sync(folders, hours, pages, resume=False):
                 if cursor == page["next_cursor"]:
                     raise RuntimeError("Paging did not advance")
                 cursor = page["next_cursor"]
-            counts[folder] = {"fetched": total, "has_more": bool(page["next_cursor"])}
+            counts[folder] = {
+                "fetched": total,
+                "has_more": bool(page["next_cursor"]),
+                "attachments": attachment_counts,
+            }
     return counts
 
 
@@ -84,6 +102,11 @@ def main():
     s.add_argument("--folders", default="InboxAll,Sent")
     s.add_argument("--hours", type=int, default=72)
     s.add_argument("--pages", type=int, default=10)
+    s.add_argument(
+        "--no-attachments",
+        action="store_true",
+        help="Skip attachment extraction; keep any previously cached native attachment text",
+    )
     s.add_argument(
         "--resume",
         action="store_true",
@@ -106,7 +129,9 @@ def main():
     elif a.cmd == "sync":
         if not 1 <= a.pages <= 10000 or not 0 <= a.hours <= 876000:
             p.error("Invalid sync limits")
-        out = sync(a.folders.split(","), a.hours, a.pages, a.resume)
+        out = sync(
+            a.folders.split(","), a.hours, a.pages, a.resume, not a.no_attachments
+        )
     elif a.cmd == "embed-pending":
         with writer_lock():
             out = rag.embed_pending(a.limit)

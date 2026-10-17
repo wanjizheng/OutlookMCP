@@ -23,7 +23,20 @@ class BackendTests(unittest.TestCase):
             rag.initialize(source)
             with rag.connect(False, source) as c:
                 rag.ingest(
-                    [{"EntryID": "message", "Body": "attachment research text"}], c
+                    [
+                        {
+                            "EntryID": "message",
+                            "Body": "attachment research text",
+                            "_AttachmentRecords": [
+                                {
+                                    "name": "native.txt",
+                                    "status": "ok",
+                                    "text": "nativecachedneedle",
+                                }
+                            ],
+                        }
+                    ],
+                    c,
                 )
                 cid = c.execute("SELECT chunk_id FROM email_chunks").fetchone()[0]
                 c.execute(
@@ -43,6 +56,12 @@ class BackendTests(unittest.TestCase):
             ):
                 compact_legacy.main()
             with rag.connect(True, dest) as c:
+                self.assertIn(
+                    "nativecachedneedle",
+                    c.execute(
+                        "SELECT records_json FROM native_attachment_state"
+                    ).fetchone()[0],
+                )
                 self.assertEqual(
                     c.execute("SELECT count(*) FROM email_chunks").fetchone()[0], 1
                 )

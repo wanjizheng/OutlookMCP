@@ -33,3 +33,5 @@ No send, draft, delete, mark-read, meeting-change, shell, arbitrary file or sync
 Code and dependencies live in this checkout. Personal index files are under `data/`, model under `models/`, and private diagnostics/config backups under `artifacts/`; all are excluded from Git. `OUTLOOK_MCP_DATA_DIR` can point to another local SSD directory. The installer restricts default data directories to the current user and SYSTEM. A different configured data directory must be protected separately.
 
 This project reuses the fixed Outlook scripts, existing email RAG SQLite/chunk schema, and local GGUF embedding implementation. Linux/OpenClaw compatibility sources are under `compat/`; the native server never imports their Linux runtime.
+
+Native `sync` also extracts new PDF, DOCX, PPTX, XLSX, CSV, TXT and Markdown attachments into the local index by default. Raw attachments are temporary; extraction limits, explicit skipped/error states and history backfill instructions are in [INSTALL.md](INSTALL.md#新增附件文本提取windows-原生). This administrative feature adds no MCP write/export tools and no WSL dependency.

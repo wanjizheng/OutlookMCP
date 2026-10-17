@@ -40,6 +40,12 @@ def main():
                 "DELETE FROM email_chunk_vectors WHERE chunk_id NOT IN (SELECT chunk_id FROM email_chunks)"
             )
             c.execute("INSERT INTO meta SELECT * FROM legacy.meta")
+            if c.execute(
+                "SELECT 1 FROM legacy.sqlite_master WHERE name='native_attachment_state'"
+            ).fetchone():
+                c.execute(
+                    "INSERT INTO native_attachment_state SELECT * FROM legacy.native_attachment_state"
+                )
             c.execute(
                 "INSERT INTO email_chunks_fts SELECT entry_id,chunk_id,subject,sender,received_time,chunk_text FROM email_chunks"
             )

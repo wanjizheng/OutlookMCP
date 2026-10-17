@@ -46,7 +46,22 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1 -WithEmbed
 
 `embed-pending` 为原生新增/更新的文本块补本地向量，不读取 Outlook。重复运行可补齐剩余向量；不安装模型时仍可使用 BM25。
 
-首次全量索引建议在普通终端中运行，保持终端开启；MCP 查询不自动启动全量同步。新同步正文最多 100,000 字符，附件正文保留导入的已有索引，原生附件增量支持情况见架构说明。
+首次全量索引建议在普通终端中运行，保持终端开启；MCP 查询不自动启动全量同步。新同步正文最多 100,000 字符。
+
+### 新增附件文本提取（Windows 原生）
+
+`sync` 默认读取并提取 **PDF、DOCX、PPTX、XLSX、CSV、TXT、Markdown** 附件。安装锁文件已包含 `pypdf` 和 `defusedxml`；无需 WSL、Office 文档自动化或额外的第三方账户登录。导出和提取只由本地管理命令执行，MCP 仍然只有原来的五个只读工具，不提供附件导出、同步或任意文件读取工具。
+
+- 每封最多处理 6 个支持格式的附件；单文件上限 10 MiB，合计上限 40 MiB。每附件最多保留 12,000 字符文本，PDF 最多处理前 200 页；达到文本或页数上限会标记 `truncated`。
+- 原文件仅在数据目录内、受当前用户与 SYSTEM ACL 保护的 `attachment-tmp/` 临时目录中保存，成功或失败后清理。索引只保存有上限的提取文本、文件名、哈希和处理状态，不长期保存原附件。
+- 解析在原生 Python 子进程中执行，单文件限时 20 秒；Office ZIP 最多 1,000 个成员、展开后总量最多 20 MiB，禁止 XML DTD/外部实体，不运行宏或公式。
+- 同步输出 `attachments` 各状态的计数。`ok` 表示成功提取；`no_text` 表示没有可提取的文本（扫描 PDF 不做 OCR）；加密 PDF 为 `encrypted`；超限和不支持的格式会分别标记并跳过。旧版 `.doc/.ppt/.xls`、图片和 OCR 不在本次支持范围。
+- 遇到导出错误、损坏文件解析失败或超时，本页邮件和分页断点不提交，之前提交的页保留。处理原因后重跑；确需跳过附件可显式加入 `--no-attachments`。此选项保留已缓存的原生附件文本，不代表附件已经补齐。
+- 附件加入索引后同样使用 `embed-pending` 补向量。原生同步会在正文不变时检查附件内容变化；重复同步不会重复建块，改变的附件会使对应邮件重新建块、清理旧向量并等待补向量。
+
+给升级前已经索引的历史邮件补附件：先执行一次 `sync --hours 0 --pages 20`（不加 `--resume`，从最新邮件开始），之后用同样范围加 `--resume` 分批继续。已有索引不会被清空；结束后执行 `embed-pending`。不要复用升级前代表“只有正文”的旧回填进度来声称附件完整。
+
+CSV/TXT/Markdown 支持 UTF-8、带 BOM 的 UTF-16，及 Windows-1252 回退；其他编码需要预先转换。XLSX 提取存储的单元格值与共享字符串，不重新计算公式。PDF 提取能力见 [pypdf 官方说明](https://pypdf.readthedocs.io/en/stable/user/extract-text.html)。
 
 已有 SQLite 邮件 RAG：使用 SQLite online backup，不能只复制正在使用的 `.db` 而忽略 WAL。迁移命令必须在**源数据库所属操作系统**运行，避免跨系统锁失效。源为 Windows 时：
 
