@@ -35,7 +35,7 @@ def main():
         .read_text()
         .replace("../compat/outlook_reader/scripts/mail_paging.ps1", "mail_paging.ps1")
     )
-    (scripts / "test_mail_paging.ps1").write_text(paging, encoding="utf-8-sig")
+    (scripts / "test_mail_paging.ps1").write_text(paging, encoding="utf-8-sig", newline="\n")
     # Preserve deployed wrapper signatures and the existing common helper.
     for name in ("outlook-mail-read", "outlook-calendar"):
         shutil.copy2(scripts / name, a.root.parent / "bin" / name)

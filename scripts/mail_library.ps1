@@ -214,4 +214,3 @@ foreach ($candidate in $page) {
 
     if ($result.Count -eq 0) { "[]" } else { ($result | ConvertTo-Json -Depth 5 -Compress) }
 }
-

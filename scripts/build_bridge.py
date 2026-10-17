@@ -12,7 +12,7 @@ library = daemon[a:b].replace(
     ". (Join-Path $PSScriptRoot 'mail_paging.ps1')",
     ". (Join-Path $PSScriptRoot '../compat/outlook_reader/scripts/mail_paging.ps1')",
 )
-(ROOT / "scripts/mail_library.ps1").write_text(library, encoding="utf-8-sig")
+(ROOT / "scripts/mail_library.ps1").write_text(library.rstrip()+"\n", encoding="utf-8-sig", newline="\n")
 calendar = (s / "outlook-calendar").read_text(encoding="utf-8-sig")
 a = calendar.index("\\$ns = \\$ol.GetNamespace")
 b = calendar.index("\nEOF\n", a)
@@ -22,6 +22,7 @@ calendar = calendar[a:b].replace("\\$", "$")
     + calendar
     + "\n}\n",
     encoding="utf-8-sig",
+    newline="\n",
 )
 
 fixture = (ROOT / "tests/calendar.ps1").read_text(encoding="utf-8-sig")
@@ -31,4 +32,5 @@ fixture = re.sub(r"(?m)^\. \(Join-Path .*\r?\n", "", fixture, count=1)
     + "\n"
     + fixture,
     encoding="utf-8-sig",
+    newline="\n",
 )
