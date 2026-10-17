@@ -1,0 +1,281 @@
+#!/bin/bash
+# Wrapper script to preview/cancel Outlook meetings from WSL via Windows PowerShell COM.
+# Default mode is preview-only; use --cancel to notify attendees and remove matches.
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/_common.sh" 2>/dev/null || source "$HOME/.openclaw/workspace/skills/outlook_reader/scripts/_common.sh"
+
+usage() {
+    cat <<'USAGE'
+Usage:
+  outlook-meeting-cancel --subject "Title" [--start "2026-03-06 10:00"] [--end "2026-03-06 11:00"] [--contains] [--max 5] [--preview] [--cancel]
+
+Options:
+  --subject   Required. Meeting subject matcher
+  --start     Optional. Match meetings starting at/after this time
+  --end       Optional. Match meetings ending at/before this time
+  --contains  Optional. Use substring match for subject (default is exact match)
+  --max       Optional. Max matched meetings to process (default 5)
+  --preview   Preview only (default)
+  --cancel    Cancel organizer meetings (send notices) or delete personal appointments
+USAGE
+}
+
+SUBJECT=""
+START_AT=""
+END_AT=""
+MATCH_MODE="exact"
+MAX_COUNT=5
+DO_CANCEL="false"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --subject)
+            require_option_value "$1" "$#" || exit $?
+            SUBJECT="$2"
+            shift 2
+            ;;
+        --start)
+            require_option_value "$1" "$#" || exit $?
+            START_AT="$2"
+            shift 2
+            ;;
+        --end)
+            require_option_value "$1" "$#" || exit $?
+            END_AT="$2"
+            shift 2
+            ;;
+        --contains)
+            MATCH_MODE="contains"
+            shift
+            ;;
+        --max)
+            require_option_value "$1" "$#" || exit $?
+            MAX_COUNT="$2"
+            shift 2
+            ;;
+        --cancel)
+            select_outlook_action "cancel" || exit $?
+            DO_CANCEL="true"
+            shift
+            ;;
+        --preview)
+            select_outlook_action "preview" || exit $?
+            DO_CANCEL="false"
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo '{"error":"Invalid argument"}'
+            usage
+            exit 2
+            ;;
+    esac
+done
+
+if [ -z "$SUBJECT" ]; then
+    echo '{"error":"Missing required arg: --subject"}'
+    usage
+    exit 2
+fi
+
+if ! [[ "$MAX_COUNT" =~ ^[0-9]+$ ]] || [ "$MAX_COUNT" -le 0 ] || [ "$MAX_COUNT" -gt 100 ]; then
+    echo '{"error":"--max must be an integer between 1 and 100"}'
+    exit 2
+fi
+
+if [ ! -x "$PS_EXE" ]; then
+    echo '{"error":"PowerShell not found"}'
+    exit 1
+fi
+
+SubjectEscaped=${SUBJECT//\'/\'\'}
+StartEscaped=${START_AT//\'/\'\'}
+EndEscaped=${END_AT//\'/\'\'}
+
+PS_CMD=$(cat <<EOF
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(\$false)
+\$subjectVal = '$SubjectEscaped'
+\$startRaw = '$StartEscaped'
+\$endRaw = '$EndEscaped'
+\$matchMode = '$MATCH_MODE'
+\$maxCount = [int]$MAX_COUNT
+\$doCancel = [System.Convert]::ToBoolean('$DO_CANCEL')
+
+\$startVal = \$null
+\$endVal = \$null
+try {
+    if (-not [string]::IsNullOrWhiteSpace(\$startRaw)) { \$startVal = [DateTime]::Parse(\$startRaw) }
+    if (-not [string]::IsNullOrWhiteSpace(\$endRaw)) { \$endVal = [DateTime]::Parse(\$endRaw) }
+} catch {
+    Write-Output (@{error="Invalid datetime format"; start=\$startRaw; end=\$endRaw} | ConvertTo-Json -Depth 3)
+    exit 2
+}
+
+\$ol = \$null
+\$activeErr = ""
+\$newErr = ""
+try { \$ol = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Outlook.Application") } catch { \$activeErr = \$_.Exception.Message }
+if (-not \$ol) {
+    try { \$ol = New-Object -ComObject Outlook.Application } catch { \$newErr = \$_.Exception.Message }
+}
+if (-not \$ol) {
+    \$running = Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue
+    \$detail = ""
+    if (\$newErr) { \$detail = \$newErr } elseif (\$activeErr) { \$detail = \$activeErr }
+
+    if (\$running) {
+        \$pidList = ((\$running | ForEach-Object { \$_.Id }) -join ",")
+        Write-Output (@{
+            error = "Outlook process detected (PID \$pidList), but COM connection still failed after retry. Ensure both run at same privilege level (both normal user) and restart Outlook if needed."
+            detail = \$detail
+        } | ConvertTo-Json)
+    } else {
+        Write-Output (@{
+            error = "No Outlook instance available. Please start Outlook first."
+            detail = \$detail
+        } | ConvertTo-Json)
+    }
+    exit 1
+}
+
+\$ns = \$ol.GetNamespace("MAPI")
+\$cal = \$ns.GetDefaultFolder(9)
+\$items = \$cal.Items
+try { \$items.Sort("[Start]", \$true) } catch {}
+\$items.IncludeRecurrences = \$false
+
+# Build Restrict filter for date range -- use double-quoted en-GB format
+\$dq = [char]34
+\$filters = @()
+if (\$startVal -ne \$null) {
+    \$startStr = \$startVal.ToString("d/M/yyyy HH:mm")
+    \$filters += "[Start] >= \$dq\$startStr\$dq"
+}
+if (\$endVal -ne \$null) {
+    \$endStr = \$endVal.ToString("d/M/yyyy HH:mm")
+    \$filters += "[End] <= \$dq\$endStr\$dq"
+}
+
+\$searchItems = \$items
+if (\$filters.Count -gt 0) {
+    \$filter = \$filters -join " AND "
+    try {
+        \$searchItems = \$items.Restrict(\$filter)
+    } catch {
+        # Fallback to full scan if Restrict fails
+        \$searchItems = \$items
+    }
+}
+
+\$matched = [System.Collections.ArrayList]::new()
+\$scanLimit = 3000
+\$scanned = 0
+\$truncated = \$false
+foreach (\$it in \$searchItems) {
+    if (\$matched.Count -ge \$maxCount) { break }
+    \$scanned++
+    if (\$scanned -gt \$scanLimit) {
+        \$truncated = \$true
+        break
+    }
+
+    if (\$null -eq \$it) { continue }
+
+    # Always enforce the date range locally too. If Outlook Restrict fails and
+    # we fall back to a full scan, a subject match outside the requested window
+    # must never be cancelled.
+    \$itemStart = \$null
+    \$itemEnd = \$null
+    try { \$itemStart = [datetime]\$it.Start } catch {}
+    try { \$itemEnd = [datetime]\$it.End } catch {}
+    if (\$startVal -ne \$null -and (\$itemStart -eq \$null -or \$itemStart -lt \$startVal)) { continue }
+    if (\$endVal -ne \$null -and (\$itemEnd -eq \$null -or \$itemEnd -gt \$endVal)) { continue }
+
+    \$subject = [string]\$it.Subject
+    \$okSubject = \$false
+    if (\$matchMode -eq "contains") {
+        \$okSubject = \$subject.IndexOf(\$subjectVal, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+    } else {
+        \$okSubject = [string]::Equals(\$subject, \$subjectVal, [System.StringComparison]::OrdinalIgnoreCase)
+    }
+    if (-not \$okSubject) { continue }
+
+    [void]\$matched.Add(\$it)
+}
+
+\$result = [System.Collections.ArrayList]::new()
+\$cancelled = 0
+foreach (\$it in \$matched) {
+    \$meetingStatus = -1
+    \$responseStatus = -1
+    \$recipientCount = 0
+    try { \$meetingStatus = [int]\$it.MeetingStatus } catch {}
+    try { \$responseStatus = [int]\$it.ResponseStatus } catch {}
+    try { \$recipientCount = [int]\$it.Recipients.Count } catch {}
+    \$entry = @{
+        Subject = \$it.Subject
+        Start = \$it.Start.ToString("o")
+        End = \$it.End.ToString("o")
+        Location = \$it.Location
+        EntryID = \$it.EntryID
+        MeetingStatus = \$meetingStatus
+        ResponseStatus = \$responseStatus
+        RecipientCount = \$recipientCount
+    }
+
+    if (\$doCancel) {
+        try {
+            \$isOrganizerMeeting = (\$recipientCount -gt 0) -and
+                ((\$responseStatus -eq 1) -or (\$meetingStatus -eq 1))
+            \$isReceivedMeeting = @(3, 7) -contains \$meetingStatus
+            if (\$isOrganizerMeeting) {
+                # olMeetingCanceled = 5. Send first so attendees receive the
+                # cancellation, then remove the organizer's calendar item.
+                \$it.MeetingStatus = 5
+                \$it.Send()
+                \$entry["NotificationSent"] = \$true
+                \$entry["Operation"] = "meeting-cancelled"
+                try {
+                    \$it.Delete()
+                    \$entry["Deleted"] = \$true
+                } catch {
+                    # Some Outlook builds invalidate/move the COM object as
+                    # part of Send(). The cancellation has still been sent.
+                    \$entry["Deleted"] = \$false
+                    \$entry["DeleteWarning"] = \$_.Exception.Message
+                }
+                \$entry["Cancelled"] = \$true
+                \$cancelled++
+            } elseif (\$isReceivedMeeting) {
+                \$entry["Cancelled"] = \$false
+                \$entry["Error"] = "Refusing to cancel a meeting organized by someone else"
+            } else {
+                \$it.Delete()
+                \$entry["NotificationSent"] = \$false
+                \$entry["Deleted"] = \$true
+                \$entry["Operation"] = "appointment-deleted"
+                \$entry["Cancelled"] = \$true
+                \$cancelled++
+            }
+        } catch {
+            \$entry["Cancelled"] = \$false
+            \$entry["Error"] = \$_.Exception.Message
+        }
+    }
+
+    [void]\$result.Add(\$entry)
+}
+
+if (\$doCancel) {
+    @{ status="cancelled"; matchMode=\$matchMode; totalMatched=\$matched.Count; cancelled=\$cancelled; scanned=\$scanned; truncated=\$truncated; items=\$result } | ConvertTo-Json -Depth 6
+} else {
+    @{ status="preview"; matchMode=\$matchMode; totalMatched=\$matched.Count; scanned=\$scanned; truncated=\$truncated; items=\$result; note="Use --cancel to send organizer cancellations or delete personal appointments" } | ConvertTo-Json -Depth 6
+}
+EOF
+)
+
+run_outlook_ps_command "$PS_CMD"

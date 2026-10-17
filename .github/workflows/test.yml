@@ -1,0 +1,25 @@
+name: regression-tests
+on: [push, pull_request]
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - run: python -m pip install -r requirements.lock.txt
+      - run: New-Item -ItemType Directory -Force artifacts | Out-Null
+      - run: python -m unittest discover -s tests -v
+      - run: python scripts/build_bridge.py
+      - run: git diff --exit-code -- scripts/mail_library.ps1 scripts/calendar_library.ps1
+  legacy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install numpy
+      - run: cd compat/email-rag && python -B -m unittest test_email_rag -q
+      - run: bash -n compat/outlook_reader/scripts/outlook-mail-read && bash -n compat/outlook_reader/scripts/outlook-calendar

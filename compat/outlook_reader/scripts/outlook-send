@@ -1,0 +1,208 @@
+#!/bin/bash
+# Wrapper script to send Outlook email from WSL via Windows PowerShell COM.
+# Default mode is draft-save; use --send to actually send.
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/_common.sh" 2>/dev/null || source "$HOME/.openclaw/workspace/skills/outlook_reader/scripts/_common.sh"
+
+usage() {
+    cat <<'USAGE'
+Usage:
+    outlook-send --to "a@example.com;b@example.com" --subject "Subject" --body "Body" [--cc "c@example.com"] [--attachment "/path/file"] [--draft|--preview|--send]
+
+Options:
+  --to       Required. Recipient list separated by ';'
+  --subject  Required. Mail subject
+  --body     Required. Plain text body
+  --cc          Optional. CC recipient list separated by ';'
+  --attachment  Optional. WSL or Windows path to one file
+  --draft       Save mail to Drafts (default)
+  --preview     Preview only (no save, no send)
+  --send        Actually send mail
+USAGE
+}
+
+TO=""
+CC=""
+SUBJECT=""
+BODY=""
+ATTACHMENT=""
+DO_SEND="false"
+DO_DRAFT="true"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --to)
+            require_option_value "$1" "$#" || exit $?
+            TO="$2"
+            shift 2
+            ;;
+        --cc)
+            require_option_value "$1" "$#" || exit $?
+            CC="$2"
+            shift 2
+            ;;
+        --subject)
+            require_option_value "$1" "$#" || exit $?
+            SUBJECT="$2"
+            shift 2
+            ;;
+        --body)
+            require_option_value "$1" "$#" || exit $?
+            BODY="$2"
+            shift 2
+            ;;
+        --attachment|--attach|--file)
+            require_option_value "$1" "$#" || exit $?
+            ATTACHMENT="$2"
+            shift 2
+            ;;
+        --send)
+            select_outlook_action "send" || exit $?
+            DO_SEND="true"
+            DO_DRAFT="false"
+            shift
+            ;;
+        --draft)
+            select_outlook_action "draft" || exit $?
+            DO_DRAFT="true"
+            DO_SEND="false"
+            shift
+            ;;
+        --preview)
+            select_outlook_action "preview" || exit $?
+            DO_DRAFT="false"
+            DO_SEND="false"
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo '{"error":"Invalid argument"}'
+            usage
+            exit 2
+            ;;
+    esac
+done
+
+if [ -z "$TO" ] || [ -z "$SUBJECT" ] || [ -z "$BODY" ]; then
+    echo '{"error":"Missing required args: --to, --subject, --body"}'
+    usage
+    exit 2
+fi
+
+if [ ! -x "$PS_EXE" ]; then
+    echo '{"error":"PowerShell not found"}'
+    exit 1
+fi
+
+ORIGINAL_ATTACHMENT="$ATTACHMENT"
+if [ -n "$ATTACHMENT" ] && [[ "$ATTACHMENT" == /* ]]; then
+    if [ ! -f "$ATTACHMENT" ]; then
+        echo '{"error":"Attachment file not found"}'
+        exit 2
+    fi
+    ATTACHMENT="$(wslpath -w "$ATTACHMENT")"
+fi
+
+# Keep deployed bridge scripts in sync with skill source on each run.
+sync_if_needed "$SKILL_SCRIPTS_DIR/send_outlook_mail.ps1" "$WINDOWS_BRIDGE_DIR/send_outlook_mail.ps1"
+
+ToEscaped=${TO//\'/\'\'}
+CcEscaped=${CC//\'/\'\'}
+SubjectEscaped=${SUBJECT//\'/\'\'}
+# Body may contain single quotes — double them for PS string literal.
+BodyEscaped=${BODY//\'/\'\'}
+AttachEscaped=${ATTACHMENT//\'/\'\'}
+OriginalAttachEscaped=${ORIGINAL_ATTACHMENT//\'/\'\'}
+
+PS_CMD=$(cat <<EOF_PS
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(\$false)
+\$sendFlag = [System.Convert]::ToBoolean('$DO_SEND')
+\$draftFlag = [System.Convert]::ToBoolean('$DO_DRAFT')
+
+\$ol = \$null
+\$activeErr = ""
+\$newErr = ""
+try { \$ol = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Outlook.Application") } catch { \$activeErr = \$_.Exception.Message }
+if (-not \$ol) {
+    try { \$ol = New-Object -ComObject Outlook.Application } catch { \$newErr = \$_.Exception.Message }
+}
+if (-not \$ol) {
+    \$running = Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue
+    \$detail = ""
+    if (\$newErr) { \$detail = \$newErr } elseif (\$activeErr) { \$detail = \$activeErr }
+
+    if (\$running) {
+        \$pidList = ((\$running | ForEach-Object { \$_.Id }) -join ",")
+        Write-Output (@{
+            error = "Outlook process detected (PID \$pidList), but COM connection still failed after retry. Ensure both run at same privilege level (both normal user) and restart Outlook if needed."
+            detail = \$detail
+        } | ConvertTo-Json)
+    } else {
+        Write-Output (@{
+            error = "No Outlook instance available. Please start Outlook first."
+            detail = \$detail
+        } | ConvertTo-Json)
+    }
+    exit 1
+}
+
+\$mail = \$ol.CreateItem(0)
+\$mail.To = '$ToEscaped'
+if (-not [string]::IsNullOrWhiteSpace('$CcEscaped')) { \$mail.CC = '$CcEscaped' }
+\$mail.Subject = '$SubjectEscaped'
+\$mail.Body = '$BodyEscaped'
+
+if (-not [string]::IsNullOrWhiteSpace('$AttachEscaped')) {
+    try {
+        if (-not (Test-Path -LiteralPath '$AttachEscaped' -PathType Leaf)) {
+            Write-Output (@{error="Attachment file not found"; attachment='$AttachEscaped'; originalAttachment='$OriginalAttachEscaped'} | ConvertTo-Json)
+            exit 2
+        }
+        [void]\$mail.Attachments.Add('$AttachEscaped')
+    } catch {
+        Write-Output (@{error="Failed to attach file"; detail=\$_.Exception.Message} | ConvertTo-Json)
+        exit 1
+    }
+}
+
+\$attachmentDetails = @()
+foreach (\$att in \$mail.Attachments) {
+    \$attachmentDetails += @{
+        fileName = \$att.FileName
+        displayName = \$att.DisplayName
+        size = \$att.Size
+    }
+}
+
+\$unresolved = @()
+try { [void]\$mail.Recipients.ResolveAll() } catch {}
+for (\$idx = 1; \$idx -le \$mail.Recipients.Count; \$idx++) {
+    \$recipient = \$mail.Recipients.Item(\$idx)
+    if (-not [bool]\$recipient.Resolved) {
+        \$label = [string]\$recipient.Address
+        if ([string]::IsNullOrWhiteSpace(\$label)) { \$label = [string]\$recipient.Name }
+        \$unresolved += \$label
+    }
+}
+if (\$sendFlag -and \$unresolved.Count -gt 0) {
+    Write-Output (@{error="Some recipients could not be resolved"; unresolved=@(\$unresolved)} | ConvertTo-Json -Depth 3)
+    exit 2
+}
+
+if (\$sendFlag) {
+    \$mail.Send()
+    @{ status="sent"; to=\$mail.To; cc=\$mail.CC; subject=\$mail.Subject; unresolved=@(\$unresolved); attachmentCount=\$attachmentDetails.Count; attachments=\$attachmentDetails; sentAt=(Get-Date).ToString("o") } | ConvertTo-Json -Depth 3
+} elseif (\$draftFlag) {
+    \$mail.Save()
+    @{ status="draft"; to=\$mail.To; cc=\$mail.CC; subject=\$mail.Subject; unresolved=@(\$unresolved); attachmentCount=\$attachmentDetails.Count; attachments=\$attachmentDetails; savedAt=(Get-Date).ToString("o") } | ConvertTo-Json -Depth 3
+} else {
+    @{ status="preview"; to=\$mail.To; cc=\$mail.CC; subject=\$mail.Subject; body=\$mail.Body; unresolved=@(\$unresolved); attachmentCount=\$attachmentDetails.Count; attachments=\$attachmentDetails; note="Default is draft. Use --send to actually send." } | ConvertTo-Json -Depth 3
+}
+EOF_PS
+)
+
+run_outlook_ps_command "$PS_CMD"

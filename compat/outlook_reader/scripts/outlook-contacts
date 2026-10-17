@@ -1,0 +1,92 @@
+#!/bin/bash
+# Read Outlook contacts and contact groups from WSL via classic Outlook COM.
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/_common.sh" 2>/dev/null || source "$HOME/.openclaw/workspace/skills/outlook_reader/scripts/_common.sh"
+
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+    cat <<'EOF'
+Usage: outlook-contacts [QUERY] [TOP] [MODE] [MEMBER_TOP]
+
+QUERY       Case-insensitive name/email/company/group substring (default: "")
+TOP         Maximum contacts and groups returned, each (1-2000, default: 100)
+MODE        all | contacts | groups | members (default: all)
+MEMBER_TOP  Maximum members returned per group (1-2000, default: 500)
+
+Examples:
+  outlook-contacts
+  outlook-contacts "Jane Smith" 20 contacts
+  outlook-contacts "" 100 groups
+  outlook-contacts "MSc Project 2026" 20 members 500
+EOF
+    exit 0
+fi
+
+if [ "$#" -gt 4 ]; then
+    printf '{"error":"Too many arguments. Run outlook-contacts --help for usage."}\n'
+    exit 2
+fi
+
+QUERY=${1:-""}
+TOP=${2:-100}
+MODE=${3:-"all"}
+MEMBER_TOP=${4:-500}
+
+if [ "${#QUERY}" -gt 512 ]; then
+    printf '{"error":"QUERY must be at most 512 characters"}\n'
+    exit 2
+fi
+if ! [[ "$TOP" =~ ^[0-9]+$ ]] || [ "$TOP" -lt 1 ] || [ "$TOP" -gt 2000 ]; then
+    printf '{"error":"TOP must be an integer between 1 and 2000"}\n'
+    exit 2
+fi
+if ! [[ "$MEMBER_TOP" =~ ^[0-9]+$ ]] || [ "$MEMBER_TOP" -lt 1 ] || [ "$MEMBER_TOP" -gt 2000 ]; then
+    printf '{"error":"MEMBER_TOP must be an integer between 1 and 2000"}\n'
+    exit 2
+fi
+MODE=${MODE,,}
+case "$MODE" in
+    all|contacts|groups|members) ;;
+    *)
+        printf '{"error":"MODE must be one of: all|contacts|groups|members"}\n'
+        exit 2
+        ;;
+esac
+
+if [ ! -x "$PS_EXE" ]; then
+    printf '{"error":"PowerShell not found"}\n'
+    exit 1
+fi
+if ! command -v base64 >/dev/null 2>&1; then
+    printf '{"error":"base64 command not found"}\n'
+    exit 1
+fi
+if ! command -v wslpath >/dev/null 2>&1; then
+    printf '{"error":"wslpath command not found"}\n'
+    exit 1
+fi
+
+SOURCE_SCRIPT="$SKILL_SCRIPTS_DIR/read_outlook_contacts.ps1"
+DEPLOYED_SCRIPT="$WINDOWS_BRIDGE_DIR/read_outlook_contacts.ps1"
+if [ ! -f "$SOURCE_SCRIPT" ]; then
+    printf '{"error":"Skill contact script not found"}\n'
+    exit 1
+fi
+
+sync_if_needed "$SOURCE_SCRIPT" "$DEPLOYED_SCRIPT"
+if [ ! -f "$DEPLOYED_SCRIPT" ]; then
+    printf '{"error":"Failed to deploy Outlook contact script to Windows bridge"}\n'
+    exit 1
+fi
+
+WINDOWS_SCRIPT_PATH=$(wslpath -w "$DEPLOYED_SCRIPT")
+QUERY_BASE64=$(printf '%s' "$QUERY" | base64 -w 0)
+WINDOWS_SCRIPT_ESCAPED=${WINDOWS_SCRIPT_PATH//\'/\'\'}
+
+PS_CMD=$(cat <<EOF_PS
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(\$false)
+& '$WINDOWS_SCRIPT_ESCAPED' -QueryBase64 '$QUERY_BASE64' -Mode '$MODE' -Top $TOP -MemberTop $MEMBER_TOP
+EOF_PS
+)
+
+run_outlook_ps_command "$PS_CMD"

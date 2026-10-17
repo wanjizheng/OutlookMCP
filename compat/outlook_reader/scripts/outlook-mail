@@ -1,0 +1,173 @@
+#!/bin/bash
+# Wrapper script to call Windows PowerShell from WSL for reading Outlook mail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/_common.sh" 2>/dev/null || source "$HOME/.openclaw/workspace/skills/outlook_reader/scripts/_common.sh"
+
+Top=${1:-10}
+Folder=${2:-"Inbox"}
+Hours=${3:-0}
+Mode=${4:-"all"}
+
+if ! [[ "$Top" =~ ^[0-9]+$ ]] || [ "$Top" -le 0 ] || [ "$Top" -gt 500 ]; then
+    echo '{"error":"TOP must be an integer between 1 and 500"}'
+    exit 2
+fi
+if ! [[ "$Hours" =~ ^[0-9]+$ ]]; then
+    echo '{"error":"HOURS must be a non-negative integer"}'
+    exit 2
+fi
+case "${Folder,,}" in
+    inbox|sent|drafts|deleted|junk|inboxall|inbox-all|inbox_subfolders|inbox+subfolders) ;;
+    *)
+        echo '{"error":"Invalid folder","valid":["Inbox","InboxAll","Sent","Drafts","Deleted","Junk"]}'
+        exit 2
+        ;;
+esac
+
+if [ ! -x "$PS_EXE" ]; then
+    echo '{"error":"PowerShell not found"}'
+    exit 1
+fi
+
+FolderEscaped=${Folder//\'/\'\'}
+ModeEscaped=${Mode//\'/\'\'}
+
+PS_CMD=$(cat <<EOF_PS
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(\$false)
+\$TopVal = $Top
+\$FolderVal = '$FolderEscaped'
+\$HoursVal = $Hours
+\$ModeVal = '$ModeEscaped'.ToLowerInvariant()
+
+if (@("all", "unread", "count-unread") -notcontains \$ModeVal) {
+    Write-Output (@{error="Invalid mode"; valid=@("all","unread","count-unread")} | ConvertTo-Json -Depth 3)
+    exit 2
+}
+
+\$ol = \$null
+\$activeErr = ""
+\$newErr = ""
+try { \$ol = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Outlook.Application") } catch { \$activeErr = \$_.Exception.Message }
+if (-not \$ol) {
+    try { \$ol = New-Object -ComObject Outlook.Application } catch { \$newErr = \$_.Exception.Message }
+}
+if (-not \$ol) {
+    \$running = Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue
+    \$detail = ""
+    if (\$newErr) { \$detail = \$newErr } elseif (\$activeErr) { \$detail = \$activeErr }
+
+    if (\$running) {
+        \$pidList = ((\$running | ForEach-Object { \$_.Id }) -join ",")
+        Write-Output (@{
+            error = "Outlook process detected (PID \$pidList), but COM connection still failed after retry. Ensure both run at same privilege level (both normal user) and restart Outlook if needed."
+            detail = \$detail
+        } | ConvertTo-Json)
+    } else {
+        Write-Output (@{
+            error = "No Outlook instance available. Please start Outlook first."
+            detail = \$detail
+        } | ConvertTo-Json)
+    }
+    exit 1
+}
+
+\$ns = \$ol.GetNamespace("MAPI")
+\$folderKey = \$FolderVal.ToLowerInvariant()
+\$folderMap = @{inbox=6; sent=5; drafts=16; deleted=3; junk=23}
+\$scanInboxTree = @("inboxall","inbox-all","inbox_subfolders","inbox+subfolders") -contains \$folderKey
+
+function Get-FoldersRecursive([object]\$root) {
+    \$out = [System.Collections.ArrayList]::new()
+    if (\$null -eq \$root) { return \$out }
+    [void]\$out.Add(\$root)
+    foreach (\$sf in \$root.Folders) { \$out.AddRange((Get-FoldersRecursive \$sf)) }
+    return \$out
+}
+
+if (\$scanInboxTree) {
+    \$foldersToScan = Get-FoldersRecursive (\$ns.GetDefaultFolder(6))
+} else {
+    \$folderId = \$folderMap[\$folderKey]
+    \$foldersToScan = @(\$ns.GetDefaultFolder(\$folderId))
+}
+
+# --- Server-side Restrict filter (en-GB: d/M/yyyy HH:mm, double-quoted) ---
+\$dq = [char]34
+\$limitDate = \$null
+\$filterParts = @()
+if (\$HoursVal -gt 0) {
+    \$limitDate = (Get-Date).AddHours(-\$HoursVal)
+    \$dtStr = \$limitDate.ToString("d/M/yyyy HH:mm")
+    \$filterParts += "[ReceivedTime] >= \$dq\$dtStr\$dq"
+}
+if (\$ModeVal -eq "unread") {
+    \$filterParts += "[UnRead] = True"
+}
+\$restrictFilter = \$null
+if (\$filterParts.Count -eq 1) { \$restrictFilter = \$filterParts[0] }
+if (\$filterParts.Count -ge 2) { \$restrictFilter = \$filterParts -join ' AND ' }
+
+# --- count-unread: use server-side Restrict().Count (no per-item iteration) ---
+if (\$ModeVal -eq "count-unread") {
+    \$unreadTotal = 0
+    \$countFilter = "[UnRead] = True"
+    if (\$HoursVal -gt 0) {
+        \$dtStr = \$limitDate.ToString("d/M/yyyy HH:mm")
+        \$countFilter = "[ReceivedTime] >= \$dq\$dtStr\$dq AND [UnRead] = True"
+    }
+    foreach (\$folderObj in \$foldersToScan) {
+        try {
+            \$filtered = \$folderObj.Items.Restrict(\$countFilter)
+            \$unreadTotal += \$filtered.Count
+        } catch {
+            try { \$unreadTotal += \$folderObj.UnReadItemCount } catch {}
+        }
+    }
+    @{ Folder=\$FolderVal; Hours=\$HoursVal; UnreadCount=\$unreadTotal } | ConvertTo-Json -Depth 2
+    exit 0
+}
+
+# --- Collect items from all folders ---
+\$collected = [System.Collections.ArrayList]::new()
+\$stopAll = \$false
+foreach (\$folderObj in \$foldersToScan) {
+    if (\$stopAll) { break }
+    \$items = \$folderObj.Items
+    if (\$null -ne \$restrictFilter) {
+        try { \$items = \$items.Restrict(\$restrictFilter) } catch {}
+    }
+    try { \$items.Sort("[ReceivedTime]", \$true) } catch {}
+    \$fc = 0
+    for (\$i = 1; \$i -le \$items.Count; \$i++) {
+        if (\$fc -ge \$TopVal) { break }
+        \$item = \$items.Item(\$i)
+        if (\$null -eq \$item) { continue }
+        \$rtOut = ""
+        try { \$rtOut = \$item.ReceivedTime.ToString("o") } catch { continue }
+        \$isUnread = \$false
+        try { \$isUnread = [bool]\$item.UnRead } catch {}
+        \$toStr = ""
+        try { \$toStr = [string]\$item.To } catch {}
+        [void]\$collected.Add(@{
+            Subject = [string]\$item.Subject
+            Sender  = [string]\$item.SenderName
+            To      = \$toStr
+            ReceivedTime = \$rtOut
+            Unread  = \$isUnread
+        })
+        \$fc++
+    }
+}
+
+if (\$collected.Count -eq 0) {
+    Write-Output '[]'
+} else {
+    \$sorted = \$collected | Sort-Object { \$_['ReceivedTime'] } -Descending
+    \$result = @(\$sorted | Select-Object -First \$TopVal)
+    \$result | ConvertTo-Json -Depth 3
+}
+EOF_PS
+)
+
+run_outlook_ps_command "$PS_CMD"

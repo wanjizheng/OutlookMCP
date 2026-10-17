@@ -1,0 +1,500 @@
+#!/bin/bash
+# Wrapper script to create Outlook meetings from WSL via Windows PowerShell COM.
+# Default mode is draft-save; use --send to send invitations.
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/_common.sh" 2>/dev/null || source "$HOME/.openclaw/workspace/skills/outlook_reader/scripts/_common.sh"
+
+usage() {
+    cat <<'USAGE'
+Usage:
+    outlook-meeting --subject "Title" --start "2026-03-06 10:00" --end "2026-03-06 11:00" [--location "Room"] [--body "Agenda"] [--attendees "a@x.com;b@y.com"] [--to "a@x.com;b@y.com"] [--invite "a@x.com,b@y.com"] [--optional "c@z.com"] [--draft] [--preview] [--send]
+    outlook-meeting --entry-id "<EntryID>" [--subject "New Title"] [--start "2026-03-06 10:00"] [--end "2026-03-06 11:00"] [--location "Room"] [--body "Agenda"] [--draft] [--preview] [--send]
+
+Options:
+  --subject    Required. Meeting subject
+  --start      Required. Start time (e.g. "2026-03-06 10:00" or ISO)
+  --end        Required. End time (e.g. "2026-03-06 11:00" or ISO)
+    --entry-id   Optional. Update an existing meeting by EntryID
+    --location   Optional. Meeting location (default: TBC)
+  --body       Optional. Meeting notes/body
+    --attendees  Optional. Required attendees separated by ';' or ','
+    --to         Optional alias of --attendees
+    --invite     Optional alias of --attendees
+  --optional   Optional. Optional attendees separated by ';'
+  --draft      Save to calendar without sending invites (default)
+  --preview    Preview only (no save, no send)
+  --send       Send meeting invitations
+USAGE
+}
+
+SUBJECT=""
+START_AT=""
+END_AT=""
+ENTRY_ID=""
+LOCATION=""
+BODY=""
+ATTENDEES=""
+OPTIONAL=""
+DO_SEND="false"
+DO_DRAFT="true"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --subject)
+            require_option_value "$1" "$#" || exit $?
+            SUBJECT="$2"
+            shift 2
+            ;;
+        --start)
+            require_option_value "$1" "$#" || exit $?
+            START_AT="$2"
+            shift 2
+            ;;
+        --end)
+            require_option_value "$1" "$#" || exit $?
+            END_AT="$2"
+            shift 2
+            ;;
+        --entry-id)
+            require_option_value "$1" "$#" || exit $?
+            ENTRY_ID="$2"
+            shift 2
+            ;;
+        --location)
+            require_option_value "$1" "$#" || exit $?
+            LOCATION="$2"
+            shift 2
+            ;;
+        --body)
+            require_option_value "$1" "$#" || exit $?
+            BODY="$2"
+            shift 2
+            ;;
+        --attendees)
+            require_option_value "$1" "$#" || exit $?
+            ATTENDEES="$2"
+            shift 2
+            ;;
+        --to)
+            require_option_value "$1" "$#" || exit $?
+            ATTENDEES="$2"
+            shift 2
+            ;;
+        --invite)
+            require_option_value "$1" "$#" || exit $?
+            ATTENDEES="$2"
+            shift 2
+            ;;
+        --optional)
+            require_option_value "$1" "$#" || exit $?
+            OPTIONAL="$2"
+            shift 2
+            ;;
+        --send)
+            select_outlook_action "send" || exit $?
+            DO_SEND="true"
+            DO_DRAFT="false"
+            shift
+            ;;
+        --draft)
+            select_outlook_action "draft" || exit $?
+            DO_DRAFT="true"
+            DO_SEND="false"
+            shift
+            ;;
+        --preview)
+            select_outlook_action "preview" || exit $?
+            DO_DRAFT="false"
+            DO_SEND="false"
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo '{"error":"Invalid argument"}'
+            usage
+            exit 2
+            ;;
+    esac
+done
+
+if [ -z "$ENTRY_ID" ]; then
+    if [ -z "$SUBJECT" ] || [ -z "$START_AT" ] || [ -z "$END_AT" ]; then
+        echo '{"error":"Missing required args for create mode: --subject, --start, --end"}'
+        usage
+        exit 2
+    fi
+fi
+
+if [ ! -x "$PS_EXE" ]; then
+    echo '{"error":"PowerShell not found"}'
+    exit 1
+fi
+
+SubjectEscaped=${SUBJECT//\'/\'\'}
+StartEscaped=${START_AT//\'/\'\'}
+EndEscaped=${END_AT//\'/\'\'}
+EntryIDEscaped=${ENTRY_ID//\'/\'\'}
+LocationEscaped=${LOCATION//\'/\'\'}
+BodyEscaped=${BODY//\'/\'\'}
+AttendeesEscaped=${ATTENDEES//\'/\'\'}
+OptionalEscaped=${OPTIONAL//\'/\'\'}
+
+PS_CMD=$(cat <<EOF
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(\$false)
+\$subjectVal = '$SubjectEscaped'
+\$startValRaw = '$StartEscaped'
+\$endValRaw = '$EndEscaped'
+\$entryIdVal = '$EntryIDEscaped'
+\$locationVal = '$LocationEscaped'
+\$bodyVal = '$BodyEscaped'
+\$attendeesVal = '$AttendeesEscaped'
+\$optionalVal = '$OptionalEscaped'
+\$doSend = [System.Convert]::ToBoolean('$DO_SEND')
+\$doDraft = [System.Convert]::ToBoolean('$DO_DRAFT')
+
+\$isUpdateMode = -not [string]::IsNullOrWhiteSpace(\$entryIdVal)
+\$startVal = \$null
+\$endVal = \$null
+if (-not \$isUpdateMode -or -not [string]::IsNullOrWhiteSpace(\$startValRaw) -or -not [string]::IsNullOrWhiteSpace(\$endValRaw)) {
+    try {
+        if (-not [string]::IsNullOrWhiteSpace(\$startValRaw)) { \$startVal = [DateTime]::Parse(\$startValRaw) }
+        if (-not [string]::IsNullOrWhiteSpace(\$endValRaw)) { \$endVal = [DateTime]::Parse(\$endValRaw) }
+    } catch {
+        Write-Output (@{error="Invalid datetime format"; start=\$startValRaw; end=\$endValRaw} | ConvertTo-Json -Depth 3)
+        exit 2
+    }
+}
+
+if (-not \$isUpdateMode) {
+    if (\$endVal -le \$startVal) {
+        Write-Output (@{error="End must be after start"; start=\$startVal.ToString("o"); end=\$endVal.ToString("o")} | ConvertTo-Json -Depth 3)
+        exit 2
+    }
+}
+
+\$ol = \$null
+\$activeErr = ""
+\$newErr = ""
+try { \$ol = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Outlook.Application") } catch { \$activeErr = \$_.Exception.Message }
+if (-not \$ol) {
+    try { \$ol = New-Object -ComObject Outlook.Application } catch { \$newErr = \$_.Exception.Message }
+}
+if (-not \$ol) {
+    \$running = Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue
+    \$detail = ""
+    if (\$newErr) { \$detail = \$newErr } elseif (\$activeErr) { \$detail = \$activeErr }
+
+    if (\$running) {
+        \$pidList = ((\$running | ForEach-Object { \$_.Id }) -join ",")
+        Write-Output (@{
+            error = "Outlook process detected (PID \$pidList), but COM connection still failed after retry. Ensure both run at same privilege level (both normal user) and restart Outlook if needed."
+            detail = \$detail
+        } | ConvertTo-Json)
+    } else {
+        Write-Output (@{
+            error = "No Outlook instance available. Please start Outlook first."
+            detail = \$detail
+        } | ConvertTo-Json)
+    }
+    exit 1
+}
+
+# 1 = olAppointmentItem
+\$meeting = \$null
+if (\$isUpdateMode) {
+    \$ns = \$ol.GetNamespace("MAPI")
+    try {
+        \$meeting = \$ns.GetItemFromID(\$entryIdVal)
+    } catch {
+        Write-Output (@{error="Meeting not found by EntryID"; entryId=\$entryIdVal} | ConvertTo-Json -Depth 3)
+        exit 2
+    }
+    if (\$null -eq \$meeting) {
+        Write-Output (@{error="Meeting not found by EntryID"; entryId=\$entryIdVal} | ConvertTo-Json -Depth 3)
+        exit 2
+    }
+    if (-not [string]::IsNullOrWhiteSpace(\$subjectVal)) { \$meeting.Subject = \$subjectVal }
+    if (\$startVal -ne \$null) { \$meeting.Start = \$startVal }
+    if (\$endVal -ne \$null) { \$meeting.End = \$endVal }
+    if (-not [string]::IsNullOrWhiteSpace(\$locationVal)) { \$meeting.Location = \$locationVal }
+    if (-not [string]::IsNullOrWhiteSpace(\$bodyVal)) { \$meeting.Body = \$bodyVal }
+    if ([string]::IsNullOrWhiteSpace(\$meeting.Location)) { \$meeting.Location = "TBC" }
+    if (\$meeting.End -le \$meeting.Start) {
+        Write-Output (@{error="End must be after start"; start=\$meeting.Start.ToString("o"); end=\$meeting.End.ToString("o")} | ConvertTo-Json -Depth 3)
+        exit 2
+    }
+} else {
+    \$meeting = \$ol.CreateItem(1)
+    \$meeting.Subject = \$subjectVal
+    \$meeting.Start = \$startVal
+    \$meeting.End = \$endVal
+    if (-not [string]::IsNullOrWhiteSpace(\$locationVal)) { \$meeting.Location = \$locationVal }
+    if (-not [string]::IsNullOrWhiteSpace(\$bodyVal)) { \$meeting.Body = \$bodyVal }
+    if ([string]::IsNullOrWhiteSpace(\$meeting.Location)) { \$meeting.Location = "TBC" }
+}
+
+\$requiredList = @()
+\$optionalList = @()
+if (-not [string]::IsNullOrWhiteSpace(\$attendeesVal)) {
+    \$requiredList = \$attendeesVal -split '[;,]' | ForEach-Object { \$_.Trim() } | Where-Object { \$_.Length -gt 0 }
+}
+if (-not [string]::IsNullOrWhiteSpace(\$optionalVal)) {
+    \$optionalList = \$optionalVal -split '[;,]' | ForEach-Object { \$_.Trim() } | Where-Object { \$_.Length -gt 0 }
+}
+
+function Add-MeetingRecipient([object]\$meetingItem, [string]\$address, [int]\$typeCode) {
+    \$existing = \$null
+    for (\$idx = 1; \$idx -le \$meetingItem.Recipients.Count; \$idx++) {
+        \$candidate = \$meetingItem.Recipients.Item(\$idx)
+        \$candidateAddress = ""
+        \$candidateName = ""
+        try { \$candidateAddress = [string]\$candidate.Address } catch {}
+        try { \$candidateName = [string]\$candidate.Name } catch {}
+        if (\$candidateAddress.Equals(\$address, [System.StringComparison]::OrdinalIgnoreCase) -or
+            \$candidateName.Equals(\$address, [System.StringComparison]::OrdinalIgnoreCase)) {
+            \$existing = \$candidate
+            break
+        }
+    }
+    if (\$null -eq \$existing) {
+        \$existing = \$meetingItem.Recipients.Add(\$address)
+    }
+    \$existing.Type = \$typeCode
+}
+
+if (\$requiredList.Count -gt 0 -or \$optionalList.Count -gt 0) {
+    # 1 = olMeeting
+    \$meeting.MeetingStatus = 1
+    foreach (\$a in \$requiredList) {
+        Add-MeetingRecipient -meetingItem \$meeting -address \$a -typeCode 1
+    }
+    foreach (\$a in \$optionalList) {
+        Add-MeetingRecipient -meetingItem \$meeting -address \$a -typeCode 2
+    }
+    try { [void]\$meeting.Recipients.ResolveAll() } catch {}
+}
+
+function Get-ResponseStatusLabel([int]\$statusCode) {
+    switch (\$statusCode) {
+        0 { "none" }
+        1 { "organized" }
+        2 { "tentative" }
+        3 { "accepted" }
+        4 { "declined" }
+        5 { "not_responded" }
+        default { "unknown" }
+    }
+}
+
+function Get-RecipientTypeLabel([int]\$recipientType) {
+    switch (\$recipientType) {
+        1 { "required" }
+        2 { "optional" }
+        3 { "resource" }
+        default { "unknown" }
+    }
+}
+
+function Get-MeetingAttendeeSnapshot([object]\$meetingItem) {
+    \$attendees = [System.Collections.ArrayList]::new()
+    \$summary = @{
+        total = 0
+        accepted = 0
+        tentative = 0
+        declined = 0
+        notResponded = 0
+        organized = 0
+        none = 0
+        unknown = 0
+    }
+
+    try {
+        if (\$meetingItem.Recipients.Count -gt 0) {
+            for (\$idx = 1; \$idx -le \$meetingItem.Recipients.Count; \$idx++) {
+                \$rc = \$meetingItem.Recipients.Item(\$idx)
+                \$displayName = ""
+                \$address = ""
+                \$typeCode = -1
+                \$responseStatusCode = -1
+
+                try { \$displayName = [string]\$rc.Name } catch {}
+                try { \$address = [string]\$rc.Address } catch {}
+                try { \$typeCode = [int]\$rc.Type } catch {}
+                try { \$responseStatusCode = [int]\$rc.MeetingResponseStatus } catch {}
+
+                \$responseStatus = Get-ResponseStatusLabel \$responseStatusCode
+                \$recipientType = Get-RecipientTypeLabel \$typeCode
+
+                [void]\$attendees.Add(@{
+                    Name = \$displayName
+                    Address = \$address
+                    Type = \$recipientType
+                    TypeCode = \$typeCode
+                    ResponseStatus = \$responseStatus
+                    ResponseStatusCode = \$responseStatusCode
+                })
+
+                switch (\$responseStatus) {
+                    "accepted" { \$summary.accepted++ }
+                    "tentative" { \$summary.tentative++ }
+                    "declined" { \$summary.declined++ }
+                    "not_responded" { \$summary.notResponded++ }
+                    "organized" { \$summary.organized++ }
+                    "none" { \$summary.none++ }
+                    default { \$summary.unknown++ }
+                }
+            }
+        }
+    } catch {}
+
+    \$summary.total = \$attendees.Count
+    return @{
+        attendees = @(\$attendees)
+        summary = \$summary
+    }
+}
+
+function New-MeetingPayload([string]\$status, [object]\$meetingItem, [hashtable]\$extra, [string]\$note = "") {
+    \$myResponseStatusCode = -1
+    \$myResponseStatus = "unknown"
+    \$startIso = ""
+    \$endIso = ""
+    \$subjectValOut = ""
+    \$locationValOut = ""
+    \$messageClass = ""
+    \$isMeeting = \$false
+    \$meetingStatusCode = -1
+    \$responseRequested = \$false
+    \$requiredAttendeesRaw = ""
+    \$optionalAttendeesRaw = ""
+
+    try { \$myResponseStatusCode = [int]\$meetingItem.ResponseStatus } catch {}
+    \$myResponseStatus = Get-ResponseStatusLabel \$myResponseStatusCode
+    try { \$startIso = \$meetingItem.Start.ToString("o") } catch {}
+    try { \$endIso = \$meetingItem.End.ToString("o") } catch {}
+    try { \$subjectValOut = [string]\$meetingItem.Subject } catch {}
+    try { \$locationValOut = [string]\$meetingItem.Location } catch {}
+    try { \$messageClass = [string]\$meetingItem.MessageClass } catch {}
+    try { \$isMeeting = [bool]\$meetingItem.IsMeeting } catch {}
+    try { \$meetingStatusCode = [int]\$meetingItem.MeetingStatus } catch {}
+    try { \$responseRequested = [bool]\$meetingItem.ResponseRequested } catch {}
+    try { \$requiredAttendeesRaw = [string]\$meetingItem.RequiredAttendees } catch {}
+    try { \$optionalAttendeesRaw = [string]\$meetingItem.OptionalAttendees } catch {}
+
+    \$snapshot = Get-MeetingAttendeeSnapshot -meetingItem \$meetingItem
+    \$payload = @{
+        status = \$status
+        subject = \$subjectValOut
+        start = \$startIso
+        end = \$endIso
+        location = \$locationValOut
+        myResponseStatus = \$myResponseStatus
+        myResponseStatusCode = \$myResponseStatusCode
+        messageClass = \$messageClass
+        isMeeting = \$isMeeting
+        meetingStatusCode = \$meetingStatusCode
+        responseRequested = \$responseRequested
+        requiredAttendeesRaw = \$requiredAttendeesRaw
+        optionalAttendeesRaw = \$optionalAttendeesRaw
+        attendeeMetadataAvailable = (\$snapshot.attendees.Count -gt 0) -or (-not [string]::IsNullOrWhiteSpace(\$requiredAttendeesRaw)) -or (-not [string]::IsNullOrWhiteSpace(\$optionalAttendeesRaw))
+        attendees = \$snapshot.attendees
+        attendeeResponseSummary = \$snapshot.summary
+    }
+
+    if (\$extra -ne \$null) {
+        foreach (\$k in \$extra.Keys) {
+            \$payload[\$k] = \$extra[\$k]
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace(\$note)) {
+        \$payload["note"] = \$note
+    }
+
+    return \$payload
+}
+
+\$unresolved = @()
+if (\$meeting.Recipients.Count -gt 0) {
+    for (\$i = 1; \$i -le \$meeting.Recipients.Count; \$i++) {
+        \$rc = \$meeting.Recipients.Item(\$i)
+        if (-not [bool]\$rc.Resolved) {
+            \$label = [string]\$rc.Address
+            if ([string]::IsNullOrWhiteSpace(\$label)) { \$label = [string]\$rc.Name }
+            \$unresolved += \$label
+        }
+    }
+}
+
+if (\$doSend -and \$unresolved.Count -gt 0) {
+    Write-Output (@{error="Some attendees could not be resolved"; unresolved=@(\$unresolved); required=@(\$requiredList); optional=@(\$optionalList)} | ConvertTo-Json -Depth 4)
+    exit 2
+}
+if (\$doSend -and \$meeting.Recipients.Count -eq 0) {
+    Write-Output (@{error="Cannot send a meeting without attendees; use --draft or provide --attendees"} | ConvertTo-Json -Depth 3)
+    exit 2
+}
+
+if (\$isUpdateMode) {
+    if (\$doSend) {
+        \$meeting.Send()
+        \$payload = New-MeetingPayload -status "updated-sent" -meetingItem \$meeting -extra @{
+            entryId = \$meeting.EntryID
+            unresolved = @(\$unresolved)
+            sentAt = (Get-Date).ToString("o")
+        }
+        \$payload | ConvertTo-Json -Depth 6
+    } elseif (\$doDraft) {
+        \$meeting.Save()
+        \$payload = New-MeetingPayload -status "updated" -meetingItem \$meeting -extra @{
+            entryId = \$meeting.EntryID
+            unresolved = @(\$unresolved)
+            savedAt = (Get-Date).ToString("o")
+        }
+        \$payload | ConvertTo-Json -Depth 6
+    } else {
+        \$payload = New-MeetingPayload -status "preview-update" -meetingItem \$meeting -extra @{
+            entryId = \$meeting.EntryID
+            body = \$meeting.Body
+            unresolved = @(\$unresolved)
+        } -note "Use --draft to save update, or --send to send update to attendees."
+        \$payload | ConvertTo-Json -Depth 6
+    }
+} else {
+    if (\$doSend) {
+        \$meeting.Send()
+        \$payload = New-MeetingPayload -status "sent" -meetingItem \$meeting -extra @{
+            required = @(\$requiredList)
+            optional = @(\$optionalList)
+            unresolved = @(\$unresolved)
+            sentAt = (Get-Date).ToString("o")
+        }
+        \$payload | ConvertTo-Json -Depth 6
+    } elseif (\$doDraft) {
+        \$meeting.Save()
+        \$payload = New-MeetingPayload -status "draft" -meetingItem \$meeting -extra @{
+            entryId = \$meeting.EntryID
+            required = @(\$requiredList)
+            optional = @(\$optionalList)
+            unresolved = @(\$unresolved)
+            savedAt = (Get-Date).ToString("o")
+        }
+        \$payload | ConvertTo-Json -Depth 6
+    } else {
+        \$payload = New-MeetingPayload -status "preview" -meetingItem \$meeting -extra @{
+            body = \$meeting.Body
+            required = @(\$requiredList)
+            optional = @(\$optionalList)
+            unresolved = @(\$unresolved)
+        } -note "Default is draft. Use --send to send invites."
+        \$payload | ConvertTo-Json -Depth 6
+    }
+}
+EOF
+)
+
+run_outlook_ps_command "$PS_CMD"

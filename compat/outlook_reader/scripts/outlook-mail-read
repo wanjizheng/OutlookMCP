@@ -1,0 +1,271 @@
+#!/bin/bash
+# Read Outlook mail content from WSL via Windows PowerShell COM.
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/_common.sh" 2>/dev/null || source "$HOME/.openclaw/workspace/skills/outlook_reader/scripts/_common.sh"
+
+COUNT=${1:-1}
+FOLDER=${2:-"Inbox"}
+HOURS=${3:-0}
+MODE=${4:-"all"}
+MAX_CHARS=${5:-4000}
+ATTACHMENTS_MODE=${6:-"none"}   # none | meta | export
+ATTACHMENTS_DIR=""
+BEFORE_ISO=""
+if [ "$ATTACHMENTS_MODE" = "export" ]; then
+    ATTACHMENTS_DIR=${7:-""}     # wsl dir for export mode
+    BEFORE_ISO=${8:-""}          # optional ISO-8601 upper bound (exclusive)
+else
+    BEFORE_ISO=${7:-""}          # optional ISO-8601 upper bound (exclusive)
+fi
+
+if ! [[ "$COUNT" =~ ^[0-9]+$ ]] || [ "$COUNT" -le 0 ]; then
+    echo '{"error":"COUNT must be a positive integer"}'
+    exit 2
+fi
+
+if ! [[ "$HOURS" =~ ^[0-9]+$ ]] || [ "$HOURS" -lt 0 ]; then
+    echo '{"error":"HOURS must be a non-negative integer"}'
+    exit 2
+fi
+
+if ! [[ "$MAX_CHARS" =~ ^[0-9]+$ ]] || [ "$MAX_CHARS" -le 0 ]; then
+    echo '{"error":"MAX_CHARS must be a positive integer"}'
+    exit 2
+fi
+case "${FOLDER,,}" in
+    inbox|sent|drafts|deleted|junk|inboxall|inbox-all|inbox_subfolders|inbox+subfolders|inbox/*) ;;
+    *)
+        echo '{"error":"Invalid folder","valid":["Inbox","Inbox/<subfolder>","InboxAll","Sent","Drafts","Deleted","Junk"]}'
+        exit 2
+        ;;
+esac
+
+if [[ "$ATTACHMENTS_MODE" != "none" && "$ATTACHMENTS_MODE" != "meta" && "$ATTACHMENTS_MODE" != "export" ]]; then
+    echo '{"error":"ATTACHMENTS_MODE must be one of: none|meta|export"}'
+    exit 2
+fi
+
+if [ "$ATTACHMENTS_MODE" = "export" ] && [ -z "$ATTACHMENTS_DIR" ]; then
+    echo '{"error":"ATTACHMENTS_DIR is required when ATTACHMENTS_MODE=export"}'
+    exit 2
+fi
+
+if [ ! -x "$PS_EXE" ]; then
+    echo '{"error":"PowerShell not found"}'
+    exit 1
+fi
+
+
+
+FolderEscaped=${FOLDER//\'/\'\'}
+ModeEscaped=${MODE//\'/\'\'}
+AttModeEscaped=${ATTACHMENTS_MODE//\'/\'\'}
+BeforeIsoEscaped=${BEFORE_ISO//\'/\'\'}
+
+AttDirEscaped=""
+AttDirWinEscaped=""
+if [ "$ATTACHMENTS_MODE" = "export" ]; then
+    mkdir -p "$ATTACHMENTS_DIR"
+    ATT_DIR_ABS="$(cd "$ATTACHMENTS_DIR" && pwd)"
+    ATT_DIR_WIN="$(wslpath -w "$ATT_DIR_ABS")"
+    AttDirEscaped=${ATT_DIR_ABS//\'/\'\'}
+    AttDirWinEscaped=${ATT_DIR_WIN//\'/\'\'}
+fi
+
+sync_if_needed "$SKILL_SCRIPTS_DIR/mail_paging.ps1" "$WINDOWS_BRIDGE_DIR/mail_paging.ps1"
+PagingHelperWin=$(wslpath -w "$WINDOWS_BRIDGE_DIR/mail_paging.ps1")
+PagingHelperEscaped=${PagingHelperWin//\'/\'\'}
+PS_CMD=$(cat <<EOF_PS
+. '$PagingHelperEscaped'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(\$false)
+\$countVal = $COUNT
+\$folderVal = '$FolderEscaped'
+\$hoursVal = $HOURS
+\$modeVal = '$ModeEscaped'.ToLowerInvariant()
+\$maxCharsVal = $MAX_CHARS
+\$attachmentsMode = '$AttModeEscaped'.ToLowerInvariant()
+\$attachmentsDirWsl = '$AttDirEscaped'
+\$attachmentsDirWin = '$AttDirWinEscaped'
+\$beforeIsoVal = '$BeforeIsoEscaped'
+
+if (@("all", "unread") -notcontains \$modeVal) {
+    Write-Output (@{error="Invalid mode"; valid=@("all","unread")} | ConvertTo-Json -Depth 3)
+    exit 2
+}
+if (@("none", "meta", "export") -notcontains \$attachmentsMode) {
+    Write-Output (@{error="Invalid attachments mode"; valid=@("none","meta","export")} | ConvertTo-Json -Depth 3)
+    exit 2
+}
+
+\$ol = \$null
+\$activeErr = ""
+\$newErr = ""
+try { \$ol = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Outlook.Application") } catch { \$activeErr = \$_.Exception.Message }
+if (-not \$ol) {
+    try { \$ol = New-Object -ComObject Outlook.Application } catch { \$newErr = \$_.Exception.Message }
+}
+if (-not \$ol) {
+    \$running = Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue
+    \$detail = ""
+    if (\$newErr) { \$detail = \$newErr } elseif (\$activeErr) { \$detail = \$activeErr }
+
+    if (\$running) {
+        \$pidList = ((\$running | ForEach-Object { \$_.Id }) -join ",")
+        Write-Output (@{
+            error = "Outlook process detected (PID \$pidList), but COM connection still failed after retry. Ensure both run at same privilege level (both normal user) and restart Outlook if needed."
+            detail = \$detail
+        } | ConvertTo-Json)
+    } else {
+        Write-Output (@{
+            error = "No Outlook instance available. Please start Outlook first."
+            detail = \$detail
+        } | ConvertTo-Json)
+    }
+    exit 1
+}
+
+\$ns = \$ol.GetNamespace("MAPI")
+\$folderKey = \$folderVal.ToLowerInvariant()
+\$folderMap = @{inbox=6; sent=5; drafts=16; deleted=3; junk=23}
+\$scanInboxTree = @("inboxall","inbox-all","inbox_subfolders","inbox+subfolders") -contains \$folderKey
+\$inboxPathMode = \$folderKey.StartsWith("inbox/")
+
+function Get-FoldersRecursive([object]\$root) {
+    \$result = @()
+    if (\$null -eq \$root) { return \$result }
+    \$result += \$root
+    foreach (\$sf in \$root.Folders) {
+        \$result += Get-FoldersRecursive \$sf
+    }
+    return \$result
+}
+
+if (\$scanInboxTree) {
+    \$foldersToScan = Get-FoldersRecursive (\$ns.GetDefaultFolder(6))
+} elseif (\$inboxPathMode) {
+    \$cur = \$ns.GetDefaultFolder(6)
+    \$parts = (\$folderVal -split "/") | Where-Object { -not [string]::IsNullOrWhiteSpace(\$_) }
+    # Skip first "Inbox" segment.
+    if (\$parts.Count -gt 0 -and \$parts[0].ToLowerInvariant() -eq "inbox") {
+        if (\$parts.Count -gt 1) {
+            \$parts = \$parts[1..(\$parts.Count-1)]
+        } else {
+            \$parts = @()
+        }
+    }
+    foreach (\$p in \$parts) {
+        \$next = \$null
+        foreach (\$sf in \$cur.Folders) {
+            if ([string]\$sf.Name -eq [string]\$p) { \$next = \$sf; break }
+        }
+        if (\$null -eq \$next) {
+            Write-Output (@{error="Inbox subfolder not found"; folder=\$folderVal; missing=\$p} | ConvertTo-Json -Depth 3)
+            exit 2
+        }
+        \$cur = \$next
+    }
+    \$foldersToScan = @(\$cur)
+} else {
+    \$folderId = \$folderMap[\$folderKey]
+    \$foldersToScan = @(\$ns.GetDefaultFolder(\$folderId))
+}
+
+\$result = [System.Collections.ArrayList]::new()
+\$page = @(Select-OutlookMailPage -Folders \$foldersToScan -Count \$countVal -Hours \$hoursVal -Mode \$modeVal -Before \$beforeIsoVal)
+foreach (\$candidate in \$page) {
+    \$item = \$candidate.Item
+    \$entryId = [string]\$item.EntryID
+        \$bodyRaw = ""
+        try { \$bodyRaw = [string]\$item.Body } catch { \$bodyRaw = "" }
+        if (\$null -eq \$bodyRaw) { \$bodyRaw = "" }
+
+        \$bodyTruncated = \$false
+        \$bodyOut = \$bodyRaw
+        if (\$bodyOut.Length -gt \$maxCharsVal) {
+            \$bodyOut = \$bodyOut.Substring(0, \$maxCharsVal)
+            \$bodyTruncated = \$true
+        }
+
+        \$senderEmail = ""
+        try { \$senderEmail = [string]\$item.SenderEmailAddress } catch { \$senderEmail = "" }
+
+        \$toStr = ""
+        try { \$toStr = [string]\$item.To } catch { \$toStr = "" }
+
+        \$attList = [System.Collections.ArrayList]::new()
+        if (\$attachmentsMode -ne "none") {
+            try {
+                foreach (\$att in \$item.Attachments) {
+                    if (\$null -eq \$att) { continue }
+                    \$fname = [string]\$att.FileName
+                    if ([string]::IsNullOrWhiteSpace(\$fname)) { \$fname = "attachment.bin" }
+                    \$safeName = [System.Text.RegularExpressions.Regex]::Replace(\$fname, '[\\/:*?"<>|]', '_')
+
+                    \$attObj = @{
+                        FileName = \$fname
+                        SafeFileName = \$safeName
+                        Size = 0
+                        Type = ""
+                        ExportedPath = ""
+                    }
+                    try { \$attObj.Size = [int]\$att.Size } catch {}
+                    try { \$attObj.Type = [string]\$att.Type } catch {}
+
+                    if (\$attachmentsMode -eq "export") {
+                        try {
+                            \$entrySafe = [System.Text.RegularExpressions.Regex]::Replace([string]\$item.EntryID, '[^A-Za-z0-9]', '_')
+                            \$subWsl = Join-Path \$attachmentsDirWsl \$entrySafe
+                            \$subWin = Join-Path \$attachmentsDirWin \$entrySafe
+                            if (-not (Test-Path -LiteralPath \$subWin)) {
+                                New-Item -ItemType Directory -Path \$subWin -Force | Out-Null
+                            }
+                            \$targetWin = Join-Path \$subWin \$safeName
+                            \$att.SaveAsFile(\$targetWin)
+                            \$attObj.ExportedPath = (Join-Path \$subWsl \$safeName).Replace('\','/')
+                        } catch {
+                            \$attObj.ExportedPath = ""
+                        }
+                    }
+                    [void]\$attList.Add(\$attObj)
+                }
+            } catch {
+                \$attList = [System.Collections.ArrayList]::new()
+            }
+        }
+
+        \$rtOut = ""
+        try { \$rtOut = \$candidate.Time.ToString("o") } catch { \$rtOut = "" }
+
+        \$isUnread = \$false
+        try { \$isUnread = [bool]\$item.UnRead } catch {}
+
+        [void]\$result.Add(@{
+            EntryID = \$entryId
+                StoreID = \$candidate.StoreID
+            Subject = \$item.Subject
+            Sender = \$item.SenderName
+            SenderEmailAddress = \$senderEmail
+            To = \$toStr
+            ReceivedTime = \$rtOut
+            Unread = \$isUnread
+            Body = \$bodyOut
+            BodyTruncated = \$bodyTruncated
+            Attachments = @(\$attList)
+        })
+}
+
+if (\$result.Count -eq 0) {
+    Write-Output '[]'
+} else {
+    \$result | ConvertTo-Json -Depth 5
+}
+EOF_PS
+)
+
+# Debug: dump generated PS command to stderr for diagnosis if OUTLOOK_READ_DEBUG is set
+if [ -n "$OUTLOOK_READ_DEBUG" ]; then
+    echo "$PS_CMD" >&2
+fi
+
+run_outlook_ps_command "$PS_CMD"

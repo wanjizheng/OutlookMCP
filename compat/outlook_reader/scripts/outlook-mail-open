@@ -1,0 +1,97 @@
+#!/bin/bash
+# Open an Outlook email by EntryID in desktop Outlook.
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/_common.sh" 2>/dev/null || source "$HOME/.openclaw/workspace/skills/outlook_reader/scripts/_common.sh"
+
+usage() {
+    cat <<'USAGE'
+Usage:
+  outlook-mail-open --entry-id "<EntryID>"
+USAGE
+}
+
+ENTRY_ID=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --entry-id)
+            require_option_value "$1" "$#" || exit $?
+            ENTRY_ID="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo '{"ok":false,"error":"Invalid argument"}'
+            usage
+            exit 2
+            ;;
+    esac
+done
+
+if [ -z "$ENTRY_ID" ]; then
+    echo '{"ok":false,"error":"Missing --entry-id"}'
+    usage
+    exit 2
+fi
+
+if [ ! -x "$PS_EXE" ]; then
+    echo '{"ok":false,"error":"PowerShell not found"}'
+    exit 1
+fi
+
+EntryEscaped=${ENTRY_ID//\'/\'\'}
+PS_CMD=$(cat <<EOF_PS
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(\$false)
+\$entryId = '$EntryEscaped'
+\$ol = \$null
+ \$activeErr = ""
+ \$newErr = ""
+try { \$ol = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Outlook.Application") } catch { \$activeErr = \$_.Exception.Message }
+if (-not \$ol) {
+    try { \$ol = New-Object -ComObject Outlook.Application } catch { \$newErr = \$_.Exception.Message }
+}
+if (-not \$ol) {
+    \$running = Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue
+    \$detail = ""
+    if (\$newErr) { \$detail = \$newErr } elseif (\$activeErr) { \$detail = \$activeErr }
+    if (\$running) {
+        \$pidList = ((\$running | ForEach-Object { \$_.Id }) -join ",")
+        Write-Output (@{
+            ok=\$false
+            error="Outlook process detected (PID \$pidList), but COM connection still failed after retry. Ensure both run at same privilege level (both normal user) and restart Outlook if needed."
+            detail=\$detail
+        } | ConvertTo-Json)
+    } else {
+        Write-Output (@{ok=\$false; error="No Outlook instance available"; detail=\$detail} | ConvertTo-Json)
+    }
+    exit 1
+}
+
+\$ns = \$ol.GetNamespace("MAPI")
+\$item = \$null
+try { \$item = \$ns.GetItemFromID(\$entryId) } catch {}
+if (\$null -eq \$item) {
+    Write-Output (@{ok=\$false; error="Email not found by EntryID"; entryId=\$entryId} | ConvertTo-Json -Depth 3)
+    exit 1
+}
+
+try { \$item.Display(\$false) } catch {
+    Write-Output (@{ok=\$false; error="Failed to display email"; detail=\$_.Exception.Message; entryId=\$entryId} | ConvertTo-Json -Depth 3)
+    exit 1
+}
+
+\$subject = ""
+\$sender = ""
+\$received = ""
+try { \$subject = [string]\$item.Subject } catch {}
+try { \$sender = [string]\$item.SenderName } catch {}
+try { \$received = [string]\$item.ReceivedTime.ToString("o") } catch {}
+
+Write-Output (@{ok=\$true; opened=\$true; entryId=\$entryId; subject=\$subject; sender=\$sender; receivedTime=\$received} | ConvertTo-Json -Depth 3)
+EOF_PS
+)
+
+run_outlook_ps_command "$PS_CMD"

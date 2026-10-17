@@ -1,0 +1,13 @@
+.venv/
+node_modules/
+__pycache__/
+*.pyc
+data/
+models/
+artifacts/
+*.db*
+*.log
+*.local.json
+.env
+.cache/
+.ruff_cache/

@@ -1,0 +1,144 @@
+#!/bin/bash
+# Reply to an Outlook email by EntryID from WSL via Windows PowerShell COM.
+# Default mode is draft-save; use --send to actually send.
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/_common.sh" 2>/dev/null || source "$HOME/.openclaw/workspace/skills/outlook_reader/scripts/_common.sh"
+
+usage() {
+    cat <<'USAGE'
+Usage:
+    outlook-reply --entry-id "<EntryID>" --body "Reply content" [--draft] [--preview] [--send]
+
+Options:
+  --entry-id  Required. Outlook EntryID of the original mail
+  --body      Required. Plain text reply body
+  --draft     Save reply to Drafts (default)
+  --preview   Preview only (no save, no send)
+  --send      Actually send reply
+USAGE
+}
+
+ENTRY_ID=""
+BODY=""
+DO_SEND="false"
+DO_DRAFT="true"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --entry-id)
+            require_option_value "$1" "$#" || exit $?
+            ENTRY_ID="$2"
+            shift 2
+            ;;
+        --body)
+            require_option_value "$1" "$#" || exit $?
+            BODY="$2"
+            shift 2
+            ;;
+        --send)
+            select_outlook_action "send" || exit $?
+            DO_SEND="true"
+            DO_DRAFT="false"
+            shift
+            ;;
+        --draft)
+            select_outlook_action "draft" || exit $?
+            DO_DRAFT="true"
+            DO_SEND="false"
+            shift
+            ;;
+        --preview)
+            select_outlook_action "preview" || exit $?
+            DO_DRAFT="false"
+            DO_SEND="false"
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo '{"error":"Invalid argument"}'
+            usage
+            exit 2
+            ;;
+    esac
+done
+
+if [ -z "$ENTRY_ID" ] || [ -z "$BODY" ]; then
+    echo '{"error":"Missing required args: --entry-id, --body"}'
+    usage
+    exit 2
+fi
+
+if [ ! -x "$PS_EXE" ]; then
+    echo '{"error":"PowerShell not found"}'
+    exit 1
+fi
+
+# Keep deployed bridge scripts in sync with skill source on each run.
+sync_if_needed "$SKILL_SCRIPTS_DIR/reply_outlook_mail.ps1" "$WINDOWS_BRIDGE_DIR/reply_outlook_mail.ps1"
+
+EntryEscaped=${ENTRY_ID//\'/\'\'}
+BodyEscaped=${BODY//\'/\'\'}
+
+PS_CMD=$(cat <<EOF_PS
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(\$false)
+\$sendFlag = [System.Convert]::ToBoolean('$DO_SEND')
+\$draftFlag = [System.Convert]::ToBoolean('$DO_DRAFT')
+\$entryId = '$EntryEscaped'
+
+\$ol = \$null
+\$activeErr = ""
+\$newErr = ""
+try { \$ol = [System.Runtime.Interopservices.Marshal]::GetActiveObject("Outlook.Application") } catch { \$activeErr = \$_.Exception.Message }
+if (-not \$ol) {
+    try { \$ol = New-Object -ComObject Outlook.Application } catch { \$newErr = \$_.Exception.Message }
+}
+if (-not \$ol) {
+    \$running = Get-Process -Name OUTLOOK -ErrorAction SilentlyContinue
+    \$detail = ""
+    if (\$newErr) { \$detail = \$newErr } elseif (\$activeErr) { \$detail = \$activeErr }
+
+    if (\$running) {
+        \$pidList = ((\$running | ForEach-Object { \$_.Id }) -join ",")
+        Write-Output (@{
+            error = "Outlook process detected (PID \$pidList), but COM connection still failed after retry. Ensure both run at same privilege level (both normal user) and restart Outlook if needed."
+            detail = \$detail
+        } | ConvertTo-Json)
+    } else {
+        Write-Output (@{
+            error = "No Outlook instance available. Please start Outlook first."
+            detail = \$detail
+        } | ConvertTo-Json)
+    }
+    exit 1
+}
+
+\$ns = \$ol.GetNamespace("MAPI")
+\$original = \$null
+try { \$original = \$ns.GetItemFromID(\$entryId) } catch {}
+if (-not \$original) {
+    Write-Output (@{error="Mail not found by EntryID"; entryId=\$entryId} | ConvertTo-Json -Depth 2)
+    exit 1
+}
+
+\$reply = \$original.Reply()
+\$reply.Body = '$BodyEscaped' + "\`r\`n\`r\`n" + \$reply.Body
+
+if (\$sendFlag) {
+    \$reply.Send()
+    @{ status="sent"; entryId=\$entryId; to=\$reply.To; subject=\$reply.Subject; sentAt=(Get-Date).ToString("o") } | ConvertTo-Json -Depth 2
+} elseif (\$draftFlag) {
+    \$reply.Save()
+    @{ status="draft"; entryId=\$entryId; to=\$reply.To; subject=\$reply.Subject; savedAt=(Get-Date).ToString("o") } | ConvertTo-Json -Depth 2
+} else {
+    \$preview = [string]\$reply.Body
+    if (\$preview.Length -gt 600) { \$preview = \$preview.Substring(0, 600) }
+    @{ status="preview"; entryId=\$entryId; to=\$reply.To; subject=\$reply.Subject; bodyPreview=\$preview; note="Default is draft. Use --send to actually send." } | ConvertTo-Json -Depth 3
+}
+EOF_PS
+)
+
+run_outlook_ps_command "$PS_CMD"
