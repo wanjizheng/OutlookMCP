@@ -6,6 +6,30 @@ The local store reuses the legacy `emails`, `email_chunks`, `email_chunks_fts`, 
 
 Only the administrative CLI creates/updates the database. MCP connections use SQLite `mode=ro` and `PRAGMA query_only=ON`. No synchronization or arbitrary script/file tool is registered. Local index updates do not authorize writes to the mailbox.
 
+The default server still registers exactly five read-only tools. An opt-in server
+process (`OUTLOOK_MCP_ENABLE_SEND=1`) adds immutable preparation plus a single-attempt
+send operation. The pending preview is an in-memory serialized copy, expires after
+ten minutes and is consumed before invoking the fixed Windows PowerShell bridge.
+The bridge reuses the skill's `send_outlook_mail.ps1` and shared COM library,
+matching the Outlook sender account and resolved recipient SMTP addresses.
+ChatGPT must display every field, stop and obtain explicit approval in a later
+user turn before the write tool. This is a host/client confirmation policy;
+the backend cannot independently verify a human chat reply and does not treat a
+model-supplied boolean as such proof. There is no custom desktop confirmation UI.
+The confirmation-test branch does not spawn any process or create a COM object.
+No attachments, HTML, stored drafts or automatic retries are supported by MCP.
+Legacy skill draft/preview defaults remain intact. SMTP delivery is not
+established by Outlook accepting submission.
+
+Ordinary Chat has a separate private plugin connection via OpenAI Secure MCP
+Tunnel. The local STDIO server and cloud plugin reuse the same native modules,
+models and read-only RAG. The tunnel uses outbound HTTPS and account/workspace
+associations; the health/admin listener remains loopback-only. A restricted runtime
+key is encrypted with current-user DPAPI under ignored private artifacts, supplied
+only through the tunnel process environment, and stripped at the MCP entry point.
+No tunnel API key is needed for the original local connection. A local test cannot
+substitute for an actual ordinary Chat invocation after plugin installation.
+
 Administrative attachment sync uses a separate, fixed PowerShell script to save bounded by-value attachments into private temporary folders, then extracts text in timeout-bounded native Python workers. The MCP bridge operation allowlist is unchanged. Filename-derived paths are never used: exported files are numbered inside a unique temporary folder, and Python verifies the returned path stays there. Raw files are cleaned on all normal/error exits; a machine crash or forced process termination can leave a temporary folder for local inspection.
 
 PDF uses pypdf without OCR; DOCX/PPTX/XLSX use bounded ZIP/XML parsing with defusedxml, without Office automation, macros, formulas or external entities. Each message retains bounded attachment text/status/hash records in `native_attachment_state`. Their fingerprint participates in ingest deduplication, so unchanged bodies can be backfilled and changed attachments invalidate old chunk vectors. Body-only sync preserves previously cached native attachment text. Fatal extraction errors occur before the page transaction/checkpoint; skipped formats, encrypted PDFs and files with no text remain explicit states. Compact migration also preserves native attachment state when present.

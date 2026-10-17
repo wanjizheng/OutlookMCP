@@ -4,7 +4,17 @@ All development, installers, environments, generated data and validation artifac
 
 For installation, follow INSTALL.md. Use native Windows Python and PowerShell; WSL is neither an installation prerequisite nor a runtime dependency. Only the explicitly requested one-time legacy import and OpenClaw compatibility deployment may touch WSL.
 
-The MCP is read-only. Never expose sending, drafts, marking read, deleting, arbitrary commands, arbitrary filesystem paths, attachment exports, synchronization or model installation as MCP tools. Administrative sync is a separate local CLI.
+The default MCP is read-only. The user has explicitly authorized opt-in sending,
+but only after full immutable message preview and explicit confirmation in a
+subsequent ChatGPT user turn on every attempt. The user explicitly rejected a
+custom desktop popup: reuse the existing PowerShell Outlook sender. Confirmation
+is owned by the ChatGPT conversation/client approval mechanism; the backend does
+not claim it can independently authenticate a human chat reply. Never expose a
+confirmation-bypass boolean, drafts, marking
+read, deleting, arbitrary commands, arbitrary filesystem paths, attachment
+exports, synchronization or model installation as MCP tools. Administrative sync
+is a separate local CLI. Never send real test email without approval of the
+specific recipients and message.
 
 Preserve other client settings and OpenClaw CLI signatures. Run the regression suite and real MCP stdio smoke test before claiming acceptance. Client config registration is not evidence that a running ChatGPT session has reloaded tools. Report the boundary honestly.
 

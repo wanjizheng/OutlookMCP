@@ -1,6 +1,6 @@
 # OutlookMCP
 
-Windows-native, **read-only** Outlook and local email RAG for ChatGPT desktop and other STDIO MCP clients. No WSL, OpenClaw, Microsoft Graph OAuth, school tenant app registration, API key, public port or cloud-hosted mailbox database is required at runtime.
+Windows-native Outlook and local email RAG for ChatGPT desktop and other STDIO MCP clients. **Read-only by default**, with separately enabled, human-confirmed plain-text email sending. No WSL, OpenClaw, Microsoft Graph OAuth, school tenant app registration, API key, public port or cloud-hosted mailbox database is required for the local STDIO connection. Ordinary cloud Chat integration uses an optional authenticated OpenAI Secure MCP Tunnel and needs a restricted tunnel runtime key.
 
 Requires **classic Outlook for Windows**, installed and signed in under the same interactive Windows user. New Outlook and Outlook web do not provide this COM interface. Mail returned to ChatGPT becomes part of its model context; this does not make that content local-only or override your school's data rules.
 
@@ -26,7 +26,9 @@ A web-only chat cannot execute a local installer just by reading a GitHub link. 
 | `read_email` | Read indexed or live message body, with explicit truncation |
 | `list_calendar` | Read overlapping calendar occurrences without adding appointments |
 
-No send, draft, delete, mark-read, meeting-change, shell, arbitrary file or synchronization tool is exposed. Sync and model installation are separate local administrative commands.
+By default no write tools are exposed. Setting `OUTLOOK_MCP_ENABLE_SEND=1` adds `prepare_email` and `send_prepared_email`. Preparation never changes the mailbox. ChatGPT must show the exact immutable sender, To/CC/BCC, subject and complete body, then **stop and wait for explicit user approval in a subsequent chat turn**. After approval the existing Windows PowerShell skill script submits through Outlook COM; no custom desktop window is shown. ChatGPT/client permissions own the confirmation step; the backend validates preview identity, expiry, exact recipients/account and single-attempt submission. `confirmation_test=true` validates this chat workflow without Outlook, sending or any window. Sending attachments is not supported. No draft, delete, mark-read, meeting-change, shell, arbitrary file or synchronization tool is exposed. Sync and model installation remain separate local administrative commands.
+
+See [ordinary Chat / private tunnel setup](INSTALL.md#7-普通-chatgpt-对话私有隧道和可选发送) for the distinct plugin connection. A successful local MCP call does not prove that ordinary Chat has the plugin installed.
 
 ## Storage
 

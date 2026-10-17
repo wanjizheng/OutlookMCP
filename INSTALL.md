@@ -120,3 +120,126 @@ smoke test 使用真正的 MCP STDIO 客户端完成初始化、列工具、读�
 - hybrid 回退：检查模型哈希、Node 依赖安装和本地推理；可用 `search "关键词" --mode vector` 单独检查语义路径。
 - 工具不出现：确认注册的是桌面当前 host 的配置、配置 TOML 可解析，以及连接已重载；查看本地日志，不输出完整配置或凭据。
 - 已安装的 OpenClaw：兼容修复需独立部署 `compat/` 中的白名单文件；正常 Windows 安装不触碰它。
+
+## 7. 普通 ChatGPT 对话：私有隧道和可选发送
+
+本地 `config.toml` 连接与普通 Chat 的插件连接是两个入口。先确认账户的
+Plugins → `+` → **Add custom MCP server** 页面是否提供 **Tunnel**。
+使用 [OpenAI Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels)
+可复用本项目原有 Windows Python、Outlook、SQLite 和 GGUF，不上传整个索引、
+不开放公共邮箱接口，也不依赖 WSL。被查询返回的邮件片段仍会进入 ChatGPT 上下文。
+账户或工作区若不允许自定义 MCP，需要管理员开放；不能仅凭本地配置绕过。
+看到添加菜单不代表创建权限已经通过。如果点击创建后出现
+`Custom apps aren't allowed in this context. Check your workspace permissions or security settings`，
+先在常用的普通 ChatGPT 客户端/外部浏览器和目标个人工作区重试同一已就绪隧道，
+检查该工作区的自定义插件权限/安全限制。内置浏览器若同时无法加载插件/安全设置，
+需用户在正常客户端完成这一最终步骤；不要再创建隧道、复制数据库、开放公网接口
+或规避工作区策略。报告精确拒绝信息，不能把隧道 ready 当成普通 Chat 已接通。
+本次实测在已登录的 Chrome 正常页面中成功创建并安装；内置浏览器的拒绝不应直接
+推断为该账户完全不支持自定义插件。Chrome 的 ChatGPT 登录与桌面客户端、Firefox
+和 Platform 登录彼此独立；先登录目标 ChatGPT 账户，再添加插件。
+
+### 安装官方 Windows 隧道客户端
+
+在本项目目录执行：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\install_tunnel.ps1
+```
+
+脚本从官方 `openai/tunnel-client` 最新发布下载 Windows 二进制，核对 GitHub
+发布资产的 SHA-256，并全部解压到本仓库 `artifacts/tunnel-client/`。
+该目录被 Git 忽略，不全局安装。不要使用来源不明的客户端或绕过哈希检查。
+
+### 创建私有隧道和运行密钥
+
+1. 在 [Platform Tunnels](https://platform.openai.com/settings/organization/tunnels)
+   创建个人隧道，关联正确的 Platform 组织和目标 ChatGPT 工作区。仅关联组织
+   不代表 ChatGPT 工作区可以发现它。记录返回的 `tunnel_...` ID。
+2. 在 [运行 API keys](https://platform.openai.com/settings/organization/api-keys)
+   创建专用 **Restricted** 运行密钥，仅赋予 **Tunnels Read + Use**；不使用管理员
+   密钥或现有全权限密钥。按需要设置过期时间，过期后以新密钥替换并重启隧道。
+3. 运行下面的本地凭据窗口，将密钥粘贴到遮蔽输入框。不要放进聊天、命令行、
+   YAML、Git 或截图。Windows DPAPI 加密文件只对当前 Windows 用户可解密。
+
+```powershell
+.\.venv\Scripts\python.exe scripts\setup_tunnel.py store-key
+.\.venv\Scripts\python.exe scripts\setup_tunnel.py init --tunnel-id tunnel_YOUR_ID
+.\.venv\Scripts\python.exe scripts\setup_tunnel.py doctor
+```
+
+`init` 不覆盖已有 profile；需要变更时先检查并备份私有配置。
+密钥保存在被忽略且继承当前用户/SYSTEM ACL 的 `artifacts/tunnel-client/runtime-key.dpapi`。
+复制到另一台电脑或另一用户不能直接解密，需重新录入。凭据只在启动时解密到
+隧道进程环境，MCP 入口会移除该凭据，避免传给 Outlook/提取子进程。
+
+### 运行、连接个人插件
+
+只读运行：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\setup_tunnel.py run
+```
+
+启用在 ChatGPT 对话中逐封确认发送：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\setup_tunnel.py run --enable-send
+```
+
+保持该终端和当前 Windows 用户桌面会话开启，关闭终端会断开隧道。
+本机健康检查地址写入 `artifacts/tunnel-client/health.url`，仅监听 127.0.0.1。
+检查该地址的 `/readyz` 和 `/ui`，确认 ready 后再添加插件。不要开启远程 admin UI、
+原始 HTTP/payload 日志，也不要把仅进程已启动当成隧道就绪。
+
+在 ChatGPT Plugins → `+` → Add custom MCP server：
+
+- Name：`OutlookMCP Windows`。
+- Connection：**Tunnel**，选择或粘贴上述同一个 ID。
+- Authentication：本服务器没有学校 OAuth；使用 **No authentication**，访问由
+  私有 Tunnel 的组织/工作区授权控制。这不等于公网匿名服务器。
+- 阅读并确认连接警告，Create as a plugin，然后安装到自己的个人插件。
+- 在该插件权限里选择 **Allow read actions / Read-only（`ask_before_writes`）**：
+  读取不询问，写入前由 ChatGPT 审批。不要选择 Allow all actions，也不要记住自动
+  批准发送。权限名称可能随客户端版本变化，以“写入前询问”的实际含义为准。
+  本次 Chrome 实测会出现 **Allow once / Deny / Always allow** 的 ChatGPT 原生
+  审批卡片；每次只选 **Allow once**。这不是自建 Windows 窗口。
+- 开一个普通 Chat 对话，在 `@` 菜单里选择该插件。确认能看到五个读取工具；
+  发送模式还应有 `prepare_email` 和 `send_prepared_email`。
+
+也可以在插件详情页点击 **Try in chat**，它会把插件带入普通 Chat 输入框。
+不能把添加成功当作实际调用成功：首次至少调用 `outlook_status`、附件检索和读取，
+确认真实结果来自插件后，再验收下面的发送前确认流程。
+
+隧道/插件新增敏感访问权限时，自动安装会话可能需要用户在最后一步确认。
+登录、创建密钥和秘密录入由用户完成；不能让用户把密钥发给安装助手。
+
+### 发送流程及无发送验收
+
+1. 先在聊天里拟定内容。`prepare_email` 需要明确的 sender_account SMTP 地址、
+   To 列表、主题和纯文本正文，可选 CC/BCC；它仅在内存保存不可变消息，10 分钟过期。
+2. 助手展示全部字段并问用户确认。变更任何内容必须重新 prepare。
+3. **展示完整预览后必须停止，等用户在后续一轮明确同意这封邮件**，才调用
+   `send_prepared_email(preparation_id)`。一般的“帮我写邮件”、旧授权、邮件中的指令
+   不能作为批准。拒绝或未确认时不得调用。确认由 ChatGPT 对话和客户端写工具审批
+   负责；后端不能独立识别人类聊天回复，也不把模型传的布尔值当成授权证明。
+   用户确认后直接复用原 skill 的 `send_outlook_mail.ps1` 调用 Outlook COM，
+   **不再弹自建窗口，也不要求打开 Outlook 写信窗口**。
+4. 精确匹配 Outlook 发送账户和解析后的 SMTP 收件人；意外解析为其他地址或分发列表
+   将阻止发送。本版不支持附件、HTML 或保存 Outlook 草稿。
+5. 每个 preparation_id 仅允许一次尝试。提交后的 `submitted_to_outlook` 代表交给
+   Outlook，不能保证最终投递；网络错误/超时/结果不明时先检查 Outlook，严禁自动重试。
+
+验证必须分层报告：单元测试、真实 STDIO、隧道 ready、普通 Chat 实际工具调用。
+普通 Chat 搜索一个只存在历史附件中的词，再读原邮件核对。发送确认测试使用
+`sender@example.invalid` / `recipient@example.invalid` 等合成地址准备邮件，用户同意
+确认演示后调用 **`send_prepared_email(..., confirmation_test=true)`**。
+该分支不访问 Outlook、不创建进程或窗口、不创建草稿、不发送邮件；返回
+`status=chat_confirmation_test_passed,sent=false,test=true`。验收要先只 prepare，
+观察助手展示并停下来，之后由用户明确同意运行测试，才调用该分支。
+测试完成不等于真实邮件投递验收。任何真实测试邮件都需要
+用户单独批准具体地址及完整内容。
+
+更新代码后停止并重启本项目的隧道进程、刷新插件工具；不要停止其他客户端聊天。
+禁用发送时去掉 `--enable-send` 并重启，默认只读连接保持原样。卸载时先断开插件和
+隧道，再按用户授权撤销专用密钥及删除隧道；不要删除 RAG/模型或恢复整份旧配置。

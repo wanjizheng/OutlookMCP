@@ -15,10 +15,15 @@ param(
     [string]$DoSend = "false",
 
     [Parameter(Mandatory=$false)]
-    [string]$DoDraft = "true"
+    [string]$DoDraft = "true",
+
+    [string]$BCC = "",
+
+    [string]$SenderAccount = ""
 )
 
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+. (Join-Path $PSScriptRoot 'outlook_send_library.ps1')
 
 # Convert string parameters to boolean
 $sendFlag = [System.Convert]::ToBoolean($DoSend)
@@ -51,42 +56,7 @@ try {
         exit 1
     }
 
-    $mail = $ol.CreateItem(0)  # 0 = olMailItem
-    $mail.To = $To
-    if (-not [string]::IsNullOrWhiteSpace($CC)) {
-        $mail.CC = $CC
-    }
-    $mail.Subject = $Subject
-    $mail.Body = $Body
-
-    if ($sendFlag) {
-        $mail.Send()
-        @{
-            status = "sent"
-            to = $mail.To
-            cc = $mail.CC
-            subject = $mail.Subject
-            sentAt = (Get-Date).ToString("o")
-        } | ConvertTo-Json -Depth 2
-    } elseif ($draftFlag) {
-        $mail.Save()
-        @{
-            status = "draft"
-            to = $mail.To
-            cc = $mail.CC
-            subject = $mail.Subject
-            savedAt = (Get-Date).ToString("o")
-        } | ConvertTo-Json -Depth 2
-    } else {
-        @{
-            status = "preview"
-            to = $mail.To
-            cc = $mail.CC
-            subject = $mail.Subject
-            body = $mail.Body
-            note = "Default is draft. Use --send to actually send."
-        } | ConvertTo-Json -Depth 2
-    }
+    Invoke-OutlookComSend -Outlook $ol -To $To -CC $CC -BCC $BCC -SenderAccount $SenderAccount -Subject $Subject -Body $Body -DoSend $sendFlag -DoDraft $draftFlag | ConvertTo-Json -Depth 3
 } catch {
     @{
         error = $_.Exception.Message
