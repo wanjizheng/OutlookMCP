@@ -322,3 +322,13 @@ the next sync.
 
 Private source inventories, attachment material, job IDs, screenshots, chat URLs,
 models, database and credentials remain excluded from Git.
+
+
+Final ordinary Chat vector acceptance used the revised 16-chunk batches. The
+same job reported committed progress 16 -> 32 -> 48, then embedded=64 with no
+embedding error. Vectors increased 132,348 -> 132,412 and pending vectors fell
+660 -> 596. Mail count remained 38,856, chunks 133,008, removed=0; the successful
+incremental watermark advanced. The terminal status correctly remained partial
+because historical coverage and vector backlog are unfinished. This is evidence
+of working bounded vector continuation, not a claim that every vector/history
+record is complete. The source and model ran as native Windows processes.

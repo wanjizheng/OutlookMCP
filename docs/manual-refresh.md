@@ -60,7 +60,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\autostart.ps1 -A
 
 ## 全量、移动与删除保护
 
-范围为 Outlook **默认 Exchange 主邮箱**所有正常邮件文件夹及子文件夹，包含
+范围为 Outlook **默认 Exchange 主邮箱**所有正常邮件文件夹及子文件夹中的
+普通邮件（IPM.Note 族；会议请求等其他项目不属于邮件镜像范围），包含
 收件、已发送和主邮箱内的归档文件夹；排除 Deleted/Junk/Drafts/Outbox 和虚拟搜索
 文件夹。不包括共享邮箱或单独的在线归档 Store。切换主邮箱会拒绝同步，需本地
 审查范围。现有历史导入缓存按本项目原来的主邮箱缓存迁移；不要把多个邮箱的
