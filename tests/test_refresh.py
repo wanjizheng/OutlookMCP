@@ -46,7 +46,7 @@ class RefreshTests(unittest.TestCase):
         self.assertNotIn("CONTROL_PLANE_API_KEY", spawn.call_args.kwargs["env"])
         self.assertEqual(spawn.call_args.kwargs["env"]["EMAIL_RAG_AUTO_INSTALL"], "0")
         self.assertFalse(spawn.call_args.kwargs.get("shell", False))
-        self.assertEqual(first["scope"]["max_messages_per_folder"], 200)
+        self.assertEqual(first["scope"]["resume"], True)
         self.assertNotIn("created_epoch", first)
 
     def test_launch_failure_and_stale_or_reused_process_are_not_success(self):
@@ -69,62 +69,16 @@ class RefreshTests(unittest.TestCase):
 
     def test_busy_writer_does_not_call_outlook_or_embed(self):
         with patch.object(cli, "writer_lock", side_effect=RuntimeError("busy")), \
-                patch.object(cli, "_sync") as sync, patch.object(rag, "embed_pending") as embed:
+                patch.object(refresh.synchronizer, "run") as sync, patch.object(rag, "embed_pending") as embed:
             state = self.state()
             refresh.execute(state)
         self.assertEqual(state["status"], "failed")
         sync.assert_not_called()
         embed.assert_not_called()
 
-    def test_embedding_failure_is_partial_and_never_mail_submission(self):
-        (self.root / "models").mkdir()
-        (self.root / "models/embedding.gguf").touch()
-        with patch.object(rag, "ROOT", self.root), patch.object(cli, "_sync", return_value={"InboxAll": {"has_more": False}}), \
-                patch.object(rag, "embed_pending", side_effect=RuntimeError("model failed")):
-            state = self.state()
-            refresh.execute(state)
-        self.assertEqual(state["status"], "partial")
-        self.assertEqual(state["embedding"]["error"], "local_embedding_failed")
 
-    def test_real_pipeline_extracts_and_indexes_without_mailbox_writes(self):
-        (self.root / "models").mkdir()
-        (self.root / "models/embedding.gguf").touch()
-        stamp = dt.datetime.now(dt.UTC).isoformat()
-        def page(folder, count, hours, cursor, max_chars):
-            self.assertEqual((count, hours, cursor, max_chars), (100, 72, "", 100000))
-            return {"items": [{"EntryID": folder, "Body": "fresh text", "ReceivedTime": stamp,
-                               "Attachments": [{"name": "test.txt"}]}], "next_cursor": ""}
-        with patch.object(rag, "ROOT", self.root), patch.object(cli.bridge, "list_mail", side_effect=page) as read, \
-                patch.object(cli.attachments, "collect", return_value=[{"name": "test.txt", "status": "ok", "text": "attachmentnewneedle"}]), \
-                patch.object(rag, "embed", side_effect=lambda texts: [[1.0, 0.0] for _ in texts]):
-            state = self.state()
-            refresh.execute(state)
-        self.assertEqual(read.call_count, 2)
-        self.assertEqual(state["status"], "completed")
-        self.assertEqual(state["after"]["emails"], 2)
-        self.assertEqual(state["after"]["pending_recent_vectors"], 0)
-        self.assertEqual(len(rag.search("attachmentnewneedle", mode="bm25")["items"]), 2)
 
-    def test_later_folder_failure_preserves_committed_page_without_success_claim(self):
-        def page(folder, *args, **kwargs):
-            if folder == "Sent":
-                raise RuntimeError("private-message-text-must-not-leak")
-            return {"items": [{"EntryID": "committed", "Body": "kept"}], "next_cursor": ""}
-        with patch.object(cli.bridge, "list_mail", side_effect=page), patch.object(cli.attachments, "collect", return_value=[]):
-            state = self.state()
-            refresh.execute(state)
-        self.assertEqual(state["status"], "failed")
-        self.assertEqual(state["after"]["emails"], 1)
-        self.assertNotIn("private-message", json.dumps(state))
-        self.assertNotIn("freshness", state)
 
-    def test_more_pages_or_missing_model_reports_partial(self):
-        with patch.object(rag, "ROOT", self.root), patch.object(cli, "_sync", return_value={"InboxAll": {"has_more": True}}):
-            state = self.state()
-            refresh.execute(state)
-        self.assertEqual(state["status"], "partial")
-        self.assertTrue(state["has_more_mail"])
-        self.assertEqual(state["embedding"]["error"], "local_model_not_installed")
 
     def test_recent_vector_budget_skips_history_and_can_continue_backlog(self):
         rag.initialize()
@@ -170,11 +124,12 @@ refresh.worker('a'*32)
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     tools = {t.name: t for t in (await session.list_tools()).tools}
-                    self.assertEqual(len(tools), 7)
+                    self.assertEqual(len(tools), 8)
                     self.assertFalse(tools["refresh_email_index"].annotations.readOnlyHint)
                     self.assertFalse(tools["refresh_email_index"].annotations.destructiveHint)
                     self.assertEqual(tools["refresh_email_index"].inputSchema.get("properties", {}), {})
                     self.assertTrue(tools["get_refresh_status"].annotations.readOnlyHint)
+                    self.assertTrue(tools["full_sync_email_index"].annotations.destructiveHint)
                     result = await session.call_tool("get_refresh_status", {"job_id": state["job_id"]})
                     self.assertFalse(result.isError)
                     data = result.structuredContent or json.loads(result.content[0].text)

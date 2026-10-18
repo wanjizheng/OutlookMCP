@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS native_attachment_state(entry_id TEXT PRIMARY KEY,signature TEXT NOT NULL,records_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS email_chunks(chunk_id INTEGER PRIMARY KEY AUTOINCREMENT,entry_id TEXT NOT NULL,chunk_index INTEGER NOT NULL,subject TEXT,sender TEXT,received_time TEXT,chunk_text TEXT NOT NULL,text_hash TEXT NOT NULL,embedding_json TEXT,embedding_norm REAL,updated_at TEXT NOT NULL,UNIQUE(entry_id,chunk_index));
 CREATE TABLE IF NOT EXISTS email_chunk_vectors(chunk_id INTEGER PRIMARY KEY,dimensions INTEGER NOT NULL,embedding_f32 BLOB NOT NULL,updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS native_vector_ids ON email_chunk_vectors(chunk_id);
 CREATE VIRTUAL TABLE IF NOT EXISTS email_chunks_fts USING fts5(entry_id UNINDEXED,chunk_id UNINDEXED,subject,sender,received_time UNINDEXED,chunk_text,tokenize='unicode61');""")
 
 
@@ -67,7 +68,7 @@ def status():
             "chunks": c.execute("SELECT count(*) FROM email_chunks").fetchone()[0],
             "last_sync": dict(
                 c.execute(
-                    "SELECT key,value FROM meta WHERE key IN ('last_sync_at','windows_last_sync_at')"
+                    "SELECT key,value FROM meta WHERE key IN ('last_sync_at','windows_last_sync_at','native_successful_sync_at','native_full_sync_at')"
                 )
             ),
             "retrieval": "local FTS5; hybrid when GGUF model is installed",
@@ -75,7 +76,7 @@ def status():
         }
 
 
-def embed(texts):
+def embed(texts, *, timeout=45):
     model = ROOT / "models/embedding.gguf"
     if not model.exists():
         raise RuntimeError("Local embedding model is not installed")
@@ -93,7 +94,7 @@ def embed(texts):
         text=True,
         encoding="utf-8",
         capture_output=True,
-        timeout=45,
+        timeout=timeout,
         env=env,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
@@ -248,12 +249,16 @@ def ingest(rows, conn):
             and same_attachments
         ):
             continue
-        conn.execute(
-            "DELETE FROM email_chunk_vectors WHERE chunk_id IN (SELECT chunk_id FROM email_chunks WHERE entry_id=?)",
-            (eid,),
-        )
-        conn.execute("DELETE FROM email_chunks_fts WHERE entry_id=?", (eid,))
-        conn.execute("DELETE FROM email_chunks WHERE entry_id=?", (eid,))
+        # A new message cannot have committed chunks in a consistent index.
+        # Avoid scanning the entire FTS store for every newly arrived email;
+        # the indexed chunk lookup also catches orphaned legacy chunks.
+        if old or conn.execute("SELECT 1 FROM email_chunks WHERE entry_id=? LIMIT 1", (eid,)).fetchone():
+            conn.execute(
+                "DELETE FROM email_chunk_vectors WHERE chunk_id IN (SELECT chunk_id FROM email_chunks WHERE entry_id=?)",
+                (eid,),
+            )
+            conn.execute("DELETE FROM email_chunks_fts WHERE entry_id=?", (eid,))
+            conn.execute("DELETE FROM email_chunks WHERE entry_id=?", (eid,))
         conn.execute(
             "INSERT OR REPLACE INTO emails VALUES(?,?,?,?,?,?,?,?)",
             (
@@ -300,12 +305,14 @@ def ingest(rows, conn):
     )
 
 
-def embed_pending(limit=200, *, recent_hours=None):
+def embed_pending(limit=200, *, recent_hours=None, batch_size=8, embedding_timeout=45, progress=None):
     """Fill local vectors; optional recent scope is used by bounded manual refresh."""
     if not 1 <= limit <= 100000:
         raise ValueError("Invalid embedding limit")
     if recent_hours is not None and not 1 <= recent_hours <= 876000:
         raise ValueError("Invalid recent embedding window")
+    if not 1 <= batch_size <= 64 or not 45 <= embedding_timeout <= 180:
+        raise ValueError("Invalid embedding batch budget")
     done = 0
     with connect(False) as c:
         sql = "SELECT c.chunk_id,c.chunk_text FROM email_chunks c LEFT JOIN email_chunk_vectors v ON v.chunk_id=c.chunk_id WHERE v.chunk_id IS NULL"
@@ -315,9 +322,10 @@ def embed_pending(limit=200, *, recent_hours=None):
             parameters.append(f"-{recent_hours} hours")
         sql += " ORDER BY c.chunk_id " + ("DESC" if recent_hours is not None else "ASC") + " LIMIT ?"
         pending = c.execute(sql, (*parameters, limit)).fetchall()
-        for start in range(0, len(pending), 8):
-            batch = pending[start : start + 8]
-            vectors = embed([r["chunk_text"] for r in batch])
+        for start in range(0, len(pending), batch_size):
+            batch = pending[start : start + batch_size]
+            texts = [r["chunk_text"] for r in batch]
+            vectors = embed(texts) if embedding_timeout == 45 else embed(texts, timeout=embedding_timeout)
             if len(vectors) != len(batch):
                 raise RuntimeError("Embedding response size mismatch")
             with c:
@@ -333,4 +341,6 @@ def embed_pending(limit=200, *, recent_hours=None):
                         ),
                     )
             done += len(batch)
+            if progress:
+                progress(done)
     return {"embedded": done, "requested_limit": limit}

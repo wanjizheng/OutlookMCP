@@ -26,7 +26,7 @@ A web-only chat cannot execute a local installer just by reading a GitHub link. 
 | `read_email` | Read indexed or live message body, with explicit truncation |
 | `list_calendar` | Read overlapping calendar occurrences without adding appointments |
 
-By default no write tools are exposed. Setting `OUTLOOK_MCP_ENABLE_SEND=1` adds `prepare_email` and `send_prepared_email`. Preparation never changes the mailbox. ChatGPT must show the exact immutable sender, To/CC/BCC, subject and complete body, then **stop and wait for explicit user approval in a subsequent chat turn**. After approval the existing Windows PowerShell skill script submits through Outlook COM; no custom desktop window is shown. ChatGPT/client permissions own the confirmation step; the backend validates preview identity, expiry, exact recipients/account and single-attempt submission. `confirmation_test=true` validates this chat workflow without Outlook, sending or any window. Sending attachments is not supported. No draft, delete, mark-read, meeting-change, shell, arbitrary file or synchronization tool is exposed. Sync and model installation remain separate local administrative commands.
+By default no write tools are exposed. Setting `OUTLOOK_MCP_ENABLE_SEND=1` adds `prepare_email` and `send_prepared_email`. Preparation never changes the mailbox. ChatGPT must show the exact immutable sender, To/CC/BCC, subject and complete body, then **stop and wait for explicit user approval in a subsequent chat turn**. After approval the existing Windows PowerShell skill script submits through Outlook COM; no custom desktop window is shown. ChatGPT/client permissions own the confirmation step; the backend validates preview identity, expiry, exact recipients/account and single-attempt submission. `confirmation_test=true` validates this chat workflow without Outlook, sending or any window. Sending attachments is not supported. No draft, delete, mark-read, meeting-change, shell or arbitrary file tools are exposed. Manual index synchronization is separately opt-in; model installation remains local-only.
 
 See [ordinary Chat / private tunnel setup](INSTALL.md#7-普通-chatgpt-对话私有隧道和可选发送) for the distinct plugin connection. A successful local MCP call does not prove that ordinary Chat has the plugin installed.
 
@@ -39,9 +39,10 @@ email submissions. See INSTALL.md for status, restart and uninstall commands.
 
 Manual RAG refresh is a separate opt-in: `OUTLOOK_MCP_ENABLE_REFRESH=1`, or
 install the startup task with `-EnableSend -EnableRefresh`. It adds
-`refresh_email_index()` and `get_refresh_status(job_id)` for bounded asynchronous
-72-hour InboxAll/Sent, attachment and recent-vector updates. It never modifies
-the mailbox or sends mail. See [setup, limits and honest partial results](docs/manual-refresh.md).
+`refresh_email_index()`, `full_sync_email_index()` and `get_refresh_status(job_id)` for
+resumable incremental updates and verified full synchronization. Full cleanup is
+blocked when cached Exchange cannot prove server absence. Neither changes
+Outlook or sends mail. See [setup and coverage limits](docs/manual-refresh.md).
 
 ## Storage
 

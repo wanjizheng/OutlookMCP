@@ -1,4 +1,4 @@
-"""Explicit, fixed-scope Windows index refresh. No mailbox mutation or shell input."""
+"""Explicit, resumable Windows index synchronization. No mailbox mutation."""
 from contextlib import contextmanager
 import datetime as dt
 import json
@@ -10,12 +10,10 @@ import threading
 import time
 import uuid
 
-from . import cli, rag
+from . import cli, rag, synchronizer
 
-HOURS = 72
-PAGES = 2
 VECTORS = 64
-TIMEOUT = 600
+TIMEOUT = 86400
 ACTIVE = {"queued", "running"}
 _state_mutex = threading.RLock()
 
@@ -94,11 +92,13 @@ def status(job_id):
         else:
             interrupted = time.time() - state["created_epoch"] > 30
         if interrupted:
-            state.update(status="interrupted", note="Worker stopped. Committed pages may remain; nothing is automatically replayed.")
+            state.update(status="interrupted", note="Worker stopped. Durable message progress remains; next explicit sync resumes. No automatic replay.")
     return state
 
 
-def start():
+def start(mode="incremental"):
+    if mode not in {"incremental", "full"}:
+        raise ValueError("Invalid sync mode")
     if os.name != "nt":
         raise RuntimeError("Native Windows is required")
     with admission_lock():
@@ -110,8 +110,8 @@ def start():
         job_id = uuid.uuid4().hex
         state = {"job_id": job_id, "status": "queued", "created_epoch": time.time(),
                  "started_at": dt.datetime.now(dt.UTC).isoformat(), "poll_after_seconds": 10,
-                 "scope": {"folders": ["InboxAll", "Sent"], "hours": HOURS,
-                           "max_pages_per_folder": PAGES, "max_messages_per_folder": PAGES * 100,
+                 "mode": mode,
+                 "scope": {"mailbox": "primary", "resume": True,
                            "max_vectors": VECTORS, "timeout_seconds": TIMEOUT},
                  "mailbox_modified": False, "wsl_required": False}
         save(state)
@@ -140,36 +140,48 @@ def counts():
         return {"emails": c.execute("SELECT count(*) FROM emails").fetchone()[0],
                 "chunks": c.execute("SELECT count(*) FROM email_chunks").fetchone()[0],
                 "vectors": c.execute("SELECT count(*) FROM email_chunk_vectors").fetchone()[0],
-                "pending_recent_vectors": c.execute(
-                    "SELECT count(*) FROM email_chunks c LEFT JOIN email_chunk_vectors v ON v.chunk_id=c.chunk_id WHERE v.chunk_id IS NULL AND julianday(c.received_time)>=julianday('now', ?)",
-                    (f"-{HOURS} hours",)).fetchone()[0]}
+                "pending_vectors": c.execute(
+                    "SELECT count(*) FROM email_chunks c LEFT JOIN email_chunk_vectors v ON v.chunk_id=c.chunk_id WHERE v.chunk_id IS NULL").fetchone()[0]}
 
 
 def execute(state):
     """Whole job shares the CLI writer lock, including embedding."""
     try:
         with cli.writer_lock():
+            state.update(stage="initializing")
+            save(state)
             rag.initialize()
+            state.update(stage="counting")
+            save(state)
             state.update(stage="sync", before=counts())
             save(state)
-            state["folders"] = cli._sync(["InboxAll", "Sent"], HOURS, PAGES)
+            def progress(**values):
+                state.update(values)
+                save(state)
+            state["sync"] = synchronizer.run(state.get("mode", "incremental"), progress)
             state.update(stage="embedding", after=counts())
             save(state)
-            if (rag.ROOT / "models/embedding.gguf").exists():
+            if not state["sync"]["coverage_complete"]:
+                state["embedding"] = {"skipped": "resolve_server_history_coverage_before_full_embedding"}
+            elif (rag.ROOT / "models/embedding.gguf").exists():
                 try:
-                    state["embedding"] = rag.embed_pending(VECTORS, recent_hours=HOURS)
+                    def embedded(done):
+                        state["embedding"] = {"embedded_so_far": done, "requested_limit": VECTORS}
+                        save(state)
+                    state["embedding"] = rag.embed_pending(VECTORS, batch_size=16, embedding_timeout=180, progress=embedded)
                 except Exception as error:
-                    state["embedding"] = {"error": "local_embedding_failed", "error_type": type(error).__name__}
+                    done = state.get("embedding", {}).get("embedded_so_far", 0)
+                    state["embedding"] = {"error": "local_embedding_failed", "error_type": type(error).__name__, "embedded": done}
             else:
                 state["embedding"] = {"error": "local_model_not_installed"}
             state["after"] = counts()
-            state["has_more_mail"] = any(x["has_more"] for x in state["folders"].values())
-            state["status"] = "partial" if (state["has_more_mail"] or state["after"]["pending_recent_vectors"] or "error" in state["embedding"]) else "completed"
+            state["has_more_mail"] = not state["sync"]["coverage_complete"]
+            state["status"] = "partial" if (not state["sync"]["coverage_complete"] or state["after"]["pending_vectors"] or "error" in state["embedding"]) else "completed"
             state["freshness"] = rag.status()["last_sync"]
-            state["note"] = "Limited 72-hour refresh only; not a full historical sync. Attachment skips are reported by category."
+            state["note"] = "Mail text coverage is separate from vector backlog. Incremental retains absent IDs; only verified full sync prunes. Retry resumes committed messages."
     except Exception as error:
-        state.update(status="failed", error="refresh_failed_or_writer_busy", error_type=type(error).__name__,
-                     note="Earlier pages may be committed; no full-success claim. Retry only on user request.")
+        state.update(status="failed", error="refresh_failed_or_writer_busy", error_type=type(error).__name__, failed_stage=state.get("stage", "admission"),
+                     note="Committed messages are retained. No cleanup or successful watermark on source failure. Next explicit sync resumes from durable progress.")
         try:
             state["after"] = counts()
         except Exception:
@@ -198,7 +210,7 @@ def worker(job_id):
 
     def expired():
         with _state_mutex:
-            state.update(status="timed_out", note="Ten-minute budget expired. Committed pages may remain; no automatic retry.",
+            state.update(status="timed_out", note="Worker budget expired. Durable message progress remains; next explicit sync resumes. No automatic retry.",
                          finished_at=dt.datetime.now(dt.UTC).isoformat())
             save(state)
             win32job.TerminateJobObject(job, 1)

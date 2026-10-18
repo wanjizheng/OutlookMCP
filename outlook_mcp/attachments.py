@@ -144,6 +144,12 @@ def collect(row, data_dir):
     """Return text/status records; temporary raw attachments are always removed."""
     if not row.get("Attachments"):
         return []
+    # Metadata already suffices to classify unsupported files. Avoid launching
+    # Outlook export for signature images on every newly indexed message.
+    metadata = row["Attachments"]
+    if all(a.get("FileName") and Path(a["FileName"]).suffix.lower() not in SUPPORTED for a in metadata):
+        return [{"index": i, "name": a["FileName"], "status": "unsupported"}
+                for i, a in enumerate(metadata, 1)]
     if os.name != "nt":
         raise RuntimeError("Attachment sync requires native Windows")
     root = Path(data_dir) / "attachment-tmp"

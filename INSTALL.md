@@ -50,7 +50,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1 -WithEmbed
 
 ### 新增附件文本提取（Windows 原生）
 
-`sync` 默认读取并提取 **PDF、DOCX、PPTX、XLSX、CSV、TXT、Markdown** 附件。安装锁文件已包含 `pypdf` 和 `defusedxml`；无需 WSL、Office 文档自动化或额外的第三方账户登录。默认 MCP 仍是原来的五个只读工具，不提供附件导出或任意文件读取。用户单独启用的受限手动刷新也复用这套提取器，见 [手动刷新说明](docs/manual-refresh.md)。
+`sync` 默认读取并提取 **PDF、DOCX、PPTX、XLSX、CSV、TXT、Markdown** 附件。安装锁文件已包含 `pypdf` 和 `defusedxml`；无需 WSL、Office 文档自动化或额外的第三方账户登录。默认 MCP 仍是原来的五个只读工具，不提供附件导出或任意文件读取。用户单独启用的增量及全量同步也复用这套提取器，见 [手动刷新说明](docs/manual-refresh.md)。
 
 - 每封最多处理 6 个支持格式的附件；单文件上限 10 MiB，合计上限 40 MiB。每附件最多保留 12,000 字符文本，PDF 最多处理前 200 页；达到文本或页数上限会标记 `truncated`。
 - 原文件仅在数据目录内、受当前用户与 SYSTEM ACL 保护的 `attachment-tmp/` 临时目录中保存，成功或失败后清理。索引只保存有上限的提取文本、文件名、哈希和处理状态，不长期保存原附件。
@@ -307,3 +307,15 @@ Get-Content artifacts\tunnel-client\watchdog.log -Tail 20
 和 live `/readyz`。守护日志仅记录进程生命周期/就绪状态，不记录邮件、密钥或请求，
 每份 256 KiB，最多保留当前及两份轮转日志。所有运行文件留在 Git 忽略的
 `artifacts/tunnel-client/`。不要开启原始 HTTP/payload 调试日志。
+
+
+### 增量更新与全量核对（新版同步定义）
+
+说“更新 RAG”将从持久成功进度继续补齐，不再限定最近 72 小时；说“全量同步”
+调用独立的 `full_sync_email_index`，完整核对主邮箱正常邮件文件夹。
+只有服务器范围可确认完整、全部扫描成功且备份及复核通过，才清理本地失效索引。
+缓存模式无法确认服务器历史删除，返回 partial 并保留历史，不改 Outlook 设置。
+详细安装、重载工具、移动处理、恢复和磁盘备份说明见
+[手动同步说明](docs/manual-refresh.md)。后台仍为 Windows 原生，不依赖 WSL；
+发送确认要求不变。上面的旧 CLI `--hours 72` 示例是显式窗口命令，不代表新版
+ChatGPT “更新 RAG”工具的行为。

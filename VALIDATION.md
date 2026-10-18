@@ -258,3 +258,67 @@ The first cold baseline count was relatively slow; asynchronous status remained
 responsive and correctly reported running rather than prematurely claiming
 completion. Private job records, screenshots, chat URL, mailbox material and
 credentials remain in ignored local directories and are not part of this commit.
+
+
+## Resumable incremental and verified full sync (2026-10-18)
+
+This supersedes the earlier fixed 72-hour refresh contract; historical validation
+above remains evidence of that older version. Default STDIO still exposes exactly
+five read-only tools; opt-in refresh without sending exposes eight, and combined
+sending/refresh exposes ten (seven read, three write). Sending confirmation and
+OpenClaw scripts/interfaces are unchanged. Native Windows runtime only.
+
+All 67 Windows regression tests passed, plus the final seven-test refresh lifecycle
+check. Coverage includes legacy successful-boundary migration, long-gap and old-dated
+late arrival, empty baseline, atomic per-message progress/restart, changed messages,
+known-store pinning, stable/new-ID moves, same-subject copies, strict missing/duplicate
+source reads, failed folders, source mutation during verification/backup, cached
+Exchange refusal, SQLite backup recovery evidence, backup failure, atomic cleanup
+rollback, unsupported metadata without exports, and bounded resumable vector batches with committed-progress callbacks.
+The real default MCP mail/calendar/search smoke passed, as did dependency consistency,
+generated bridge reproducibility and whitespace checks.
+
+Important failures found and corrected during development:
+
+- Outlook Table EntryID values were short-term and did not match the historical
+  index. The source now reads PR_LONGTERM_ENTRYID_FROM_TABLE (verified against
+  the real MailItem.EntryID), without opening every MailItem for inventory.
+- Cached Exchange exposed only approximately one year of history despite being
+  connected. Absence from this view is never proof of deletion; full cleanup is
+  blocked until online server coverage is verified.
+- SQLite backup connections initially remained open on Windows; fixed explicit
+  closure. Rollback, backup-failure and backup-readable-content tests pass. A 1,100-ID reconciliation test verifies bulk
+  cleanup without SQLite parameter-limit failures or repeated full FTS scans.
+- Initial migration queued historical gaps during incremental updates. It now
+  accepts only a fully completed legacy window as an incremental boundary, reports
+  deferred history separately and tracks seen IDs to catch later old-dated arrivals.
+- The first live resume reached complete incremental text coverage but its old
+  45-second embedding call timed out. It correctly reported partial with 660 pending
+  vectors and retained the successful mail watermark. A subsequent single 64-chunk batch also exceeded
+  180 seconds on this host. Manual embedding now uses committed 16-chunk batches
+  (up to 64/job), with a 180-second call budget per batch. Old CLI/query defaults remain.
+- A narrow vector-ID index avoids scanning embedding blobs just to count progress;
+  new-message ingestion avoids a needless full FTS deletion scan.
+
+Ordinary Chat acceptance used the installed private tunnel plugin after refreshing
+its tools, with ask-before-write permissions unchanged and Allow once on local-index
+operations. No send tool was called and no Outlook mailbox write was performed.
+The initial worker was deliberately stopped after 79 committed new messages.
+Ordinary Chat observed interrupted, then a subsequent explicit update reused the
+same durable run boundary and retained those messages. It scanned 31 folders /
+7,724 locally visible messages, reused 5,992 and processed one, advancing the mail
+success watermark while reporting 1,731 historical gaps separately. The vector
+timeout above was preserved as a partial result, not represented as full success.
+
+A separate real full-sync invocation completed its local scans in about 50 seconds
+and returned partial, coverage_complete=false, server_history_verified=false,
+cleanup_blocked_reason=cached_exchange_cannot_prove_server_absence. All 32,836
+unverified absent entries were retained: removed=0, backup_created=false, full-sync
+watermark not advanced. This proves the live safe-refusal path; actual full online
+server reconciliation/deletion is covered by synthetic-source tests, not claimed as
+live acceptance. Outlook account/cache settings were not changed. COM does not
+provide a mailbox-wide atomic snapshot; mutations after the final scan belong to
+the next sync.
+
+Private source inventories, attachment material, job IDs, screenshots, chat URLs,
+models, database and credentials remain excluded from Git.

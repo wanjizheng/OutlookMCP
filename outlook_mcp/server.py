@@ -91,8 +91,14 @@ def register_refresh(server):
     @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False,
                                            idempotentHint=False, openWorldHint=False))
     def refresh_email_index() -> dict:
-        """On explicit user request only: refresh local RAG from last 72h InboxAll/Sent, max 200 messages/folder, attachments and 64 recent vectors. No mailbox changes, no sending. Starts async job; poll get_refresh_status. No full history/reindex. Host may require write approval."""
+        """On explicit 'update RAG' request: resume durable incremental progress since the last successful sync, filling new/changed/moved primary-mailbox mail and attachments. No mailbox changes or deletion cleanup. First run establishes baseline. Async: poll get_refresh_status. Vector backlog is reported separately."""
         return refresh.start()
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True,
+                                           idempotentHint=False, openWorldHint=False))
+    def full_sync_email_index() -> dict:
+        """On explicit 'full sync' request: scan all normal primary-mailbox mail folders, resume committed progress, ingest new/changed/moved mail. ONLY after complete stable verification and local SQLite backup, remove absent messages from the LOCAL index. Excludes Deleted/Junk/Drafts/Outbox/search folders. Never modifies Outlook. Async: poll get_refresh_status; source failures prevent cleanup."""
+        return refresh.start("full")
 
     @server.tool(annotations=READ)
     def get_refresh_status(job_id: str) -> dict:

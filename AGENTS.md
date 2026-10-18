@@ -13,8 +13,8 @@ not claim it can independently authenticate a human chat reply. Never expose a
 confirmation-bypass boolean, drafts, marking
 read, deleting, arbitrary commands, arbitrary filesystem paths, attachment
 exports, arbitrary synchronization or model installation as MCP tools. The user
-has explicitly authorized only the opt-in, fixed-scope manual refresh described
-in SPEC.md; full administrative sync remains a separate local CLI. Never send real test email without approval of the
+has explicitly authorized the opt-in resumable incremental and verified full sync described
+in SPEC.md; arbitrary commands, scopes and paths remain prohibited. Never send real test email without approval of the
 specific recipients and message.
 
 Preserve other client settings and OpenClaw CLI signatures. Run the regression suite and real MCP stdio smoke test before claiming acceptance. Client config registration is not evidence that a running ChatGPT session has reloaded tools. Report the boundary honestly.
