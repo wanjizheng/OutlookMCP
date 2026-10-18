@@ -42,3 +42,9 @@ class TunnelSetupTests(unittest.TestCase):
         self.assertIn("--explain", call.args[0])
         self.assertNotIn("--mcp.stdio-send-initialized-notification", call.args[0])
         self.assertEqual(call.kwargs["env"]["OUTLOOK_MCP_ENABLE_SEND"], "0")
+        self.assertEqual(call.kwargs["env"]["OUTLOOK_MCP_ENABLE_REFRESH"], "0")
+
+    def test_refresh_is_independent_from_sending(self):
+        call = self.invoke(["run", "--enable-refresh"])
+        self.assertEqual(call.kwargs["env"]["OUTLOOK_MCP_ENABLE_REFRESH"], "1")
+        self.assertEqual(call.kwargs["env"]["OUTLOOK_MCP_ENABLE_SEND"], "0")

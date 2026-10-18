@@ -52,6 +52,7 @@ def main():
     parser.add_argument("action", choices=["store-key", "init", "doctor", "run"])
     parser.add_argument("--tunnel-id")
     parser.add_argument("--enable-send", action="store_true")
+    parser.add_argument("--enable-refresh", action="store_true")
     args = parser.parse_args()
     if os.name != "nt":
         raise SystemExit("Native interactive Windows is required")
@@ -64,6 +65,7 @@ def main():
     env["XDG_CONFIG_HOME"] = str(PRIVATE / "config")
     env["XDG_STATE_HOME"] = str(PRIVATE / "state")
     env["OUTLOOK_MCP_ENABLE_SEND"] = "1" if args.enable_send else "0"
+    env["OUTLOOK_MCP_ENABLE_REFRESH"] = "1" if args.enable_refresh else "0"
     if args.action == "init":
         if not args.tunnel_id or not args.tunnel_id.startswith("tunnel_"):
             parser.error("init requires --tunnel-id from Platform")

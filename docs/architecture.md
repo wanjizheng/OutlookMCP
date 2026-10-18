@@ -4,7 +4,22 @@ ChatGPT → native Python MCP STDIO process → fixed-operation PowerShell bridg
 
 The local store reuses the legacy `emails`, `email_chunks`, `email_chunks_fts`, and `email_chunk_vectors` schema. Chunks use 900 characters / 150 overlap. Hybrid search combines FTS5 rankings with bounded NumPy float32 cosine batches and reciprocal-rank fusion. It uses the same GGUF embedding model as the imported index, on native Windows Node. Failures are reported as explicit BM25 fallback. Query results contain message IDs, dates, excerpts and sync timestamps; attachments already indexed by OpenClaw remain searchable.
 
-Only the administrative CLI creates/updates the database. MCP connections use SQLite `mode=ro` and `PRAGMA query_only=ON`. No synchronization or arbitrary script/file tool is registered. Local index updates do not authorize writes to the mailbox.
+Default MCP query connections use SQLite `mode=ro` and `PRAGMA query_only=ON`.
+The administrative CLI owns full sync/backfill. The user's separately opted-in
+bounded refresh adds a fixed local-index write job; no arbitrary script/file,
+full backfill or mailbox mutation is exposed by that operation.
+
+`OUTLOOK_MCP_ENABLE_REFRESH=1` adds a non-destructive write tool
+`refresh_email_index()` and read-only `get_refresh_status(job_id)`. A native
+worker reuses CLI sync and attachment extraction for InboxAll/Sent, 72 hours,
+two pages per root, followed by at most 64 recent pending vectors. Admission
+locking coalesces active requests; the existing writer lock covers both phases.
+A Windows Job Object and ten-minute timer bound the worker's process tree.
+Private job records let a different MCP session read progress; PID creation time
+prevents mistaking a reused PID for the worker. Interrupted jobs are never
+automatically replayed. Partial page commits, attachment skips, vector backlog
+and limited coverage are reported; no full-history freshness claim follows.
+No periodic sync is introduced. See manual-refresh.md for deployment and UX.
 
 The default server still registers exactly five read-only tools. An opt-in server
 process (`OUTLOOK_MCP_ENABLE_SEND=1`) adds immutable preparation plus a single-attempt

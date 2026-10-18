@@ -1,7 +1,8 @@
 param(
     [ValidateSet('Install','Status','Restart','Stop','Uninstall')]
     [string]$Action = 'Status',
-    [switch]$EnableSend
+    [switch]$EnableSend,
+    [switch]$EnableRefresh
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -28,6 +29,7 @@ if ($Action -eq 'Install') {
     }
     $arguments = '"' + (Join-Path $root 'scripts\tunnel_watchdog.py') + '"'
     if ($EnableSend) { $arguments += ' --enable-send' }
+    if ($EnableRefresh) { $arguments += ' --enable-refresh' }
     $taskAction = New-ScheduledTaskAction -Execute (Join-Path $root '.venv\Scripts\pythonw.exe') -Argument $arguments -WorkingDirectory $root
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $identity.Name
     # A periodic trigger also covers forced termination/manual-start cases where

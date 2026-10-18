@@ -215,3 +215,46 @@ All 39 Windows regression tests passed, as did dependency consistency, generated
 bridge reproducibility and whitespace checks. Stop now disables the periodic
 trigger as well as terminating the task; Restart re-enables it. Runtime state
 and credentials are excluded from the commit.
+
+## Explicit manual RAG refresh (2026-10-18)
+
+The user explicitly requested a bounded ChatGPT manual index refresh. Added a
+separate opt-in and two tools: refresh_email_index and get_refresh_status.
+The installed Windows logon supervisor now retains --enable-send and
+--enable-refresh. Default local STDIO remains five read-only tools; OpenClaw
+interfaces and the sending preview/approval contract are unchanged.
+
+All 51 Windows regression tests passed. New coverage includes asynchronous job
+admission/coalescing, fixed worker command and credential stripping, read-only
+status/path rejection, PID reuse/interruption, writer contention, actual
+attachment ingest with fake Outlook reads, committed-page failure, partial
+model/coverage results, recent-only bounded vector backlog and a real Windows
+worker timeout that kills its descendant. Opt-in STDIO lists seven tools without
+sending and rejects invalid status IDs; combined refresh+sending lists nine.
+Explicit dependency auto-install is disabled for the refresh worker. Default
+real STDIO mail/calendar/search smoke, bridge reproducibility and pip check pass.
+
+Live ordinary Chat acceptance used the installed private cloud plugin, not a
+local-only call. The first management Refresh tools attempt failed; retry
+succeeded and the UI listed seven read/two write tools. Existing ask-before-write
+permission was retained. A fresh ordinary Chat requested one bounded refresh,
+displayed the native Refresh Email Index approval card, and after Allow once
+started one job and polled that same job until completed. No sending tool was
+called, no email was sent and no mailbox write was performed.
+
+The real job finished in about 3 minutes 41 seconds, within its ten-minute cap:
+
+- InboxAll: 76 messages scanned; Sent: 5; neither scope had additional pages.
+- Attachment extraction: 5 ok; 56 unsupported skips, reported explicitly.
+- Emails: 38,776 before and after. Chunks: 132,337 -> 132,348.
+- Vectors: 132,337 -> 132,348; 31 vectors computed after changed chunks were
+  rebuilt; zero pending recent vectors on completion.
+- Native mail sync timestamp advanced; final completed state was visible in
+  ordinary Chat. This proves only the fixed 72-hour scope and supported text,
+  not complete history or support for skipped formats. Full-history reindex and
+  periodic synchronization were neither exposed nor run.
+
+The first cold baseline count was relatively slow; asynchronous status remained
+responsive and correctly reported running rather than prematurely claiming
+completion. Private job records, screenshots, chat URL, mailbox material and
+credentials remain in ignored local directories and are not part of this commit.

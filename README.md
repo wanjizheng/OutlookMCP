@@ -37,6 +37,12 @@ The hidden native supervisor checks readiness, restarts failed/unready transport
 with bounded backoff, and cleans up the owned process tree. It never retries
 email submissions. See INSTALL.md for status, restart and uninstall commands.
 
+Manual RAG refresh is a separate opt-in: `OUTLOOK_MCP_ENABLE_REFRESH=1`, or
+install the startup task with `-EnableSend -EnableRefresh`. It adds
+`refresh_email_index()` and `get_refresh_status(job_id)` for bounded asynchronous
+72-hour InboxAll/Sent, attachment and recent-vector updates. It never modifies
+the mailbox or sends mail. See [setup, limits and honest partial results](docs/manual-refresh.md).
+
 ## Storage
 
 Code and dependencies live in this checkout. Personal index files are under `data/`, model under `models/`, and private diagnostics/config backups under `artifacts/`; all are excluded from Git. `OUTLOOK_MCP_DATA_DIR` can point to another local SSD directory. The installer restricts default data directories to the current user and SYSTEM. A different configured data directory must be protected separately.

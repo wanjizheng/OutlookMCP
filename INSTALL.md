@@ -50,7 +50,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1 -WithEmbed
 
 ### 新增附件文本提取（Windows 原生）
 
-`sync` 默认读取并提取 **PDF、DOCX、PPTX、XLSX、CSV、TXT、Markdown** 附件。安装锁文件已包含 `pypdf` 和 `defusedxml`；无需 WSL、Office 文档自动化或额外的第三方账户登录。导出和提取只由本地管理命令执行，MCP 仍然只有原来的五个只读工具，不提供附件导出、同步或任意文件读取工具。
+`sync` 默认读取并提取 **PDF、DOCX、PPTX、XLSX、CSV、TXT、Markdown** 附件。安装锁文件已包含 `pypdf` 和 `defusedxml`；无需 WSL、Office 文档自动化或额外的第三方账户登录。默认 MCP 仍是原来的五个只读工具，不提供附件导出或任意文件读取。用户单独启用的受限手动刷新也复用这套提取器，见 [手动刷新说明](docs/manual-refresh.md)。
 
 - 每封最多处理 6 个支持格式的附件；单文件上限 10 MiB，合计上限 40 MiB。每附件最多保留 12,000 字符文本，PDF 最多处理前 200 页；达到文本或页数上限会标记 `truncated`。
 - 原文件仅在数据目录内、受当前用户与 SYSTEM ACL 保护的 `attachment-tmp/` 临时目录中保存，成功或失败后清理。索引只保存有上限的提取文本、文件名、哈希和处理状态，不长期保存原附件。
@@ -246,6 +246,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\install_tunnel.p
 隧道，再按用户授权撤销专用密钥及删除隧道；不要删除 RAG/模型或恢复整份旧配置。
 
 ### Windows 登录后自动启动、断线恢复
+
+需要普通 Chat 手动同步索引时，请另看 **[手动刷新 RAG 安装与使用](docs/manual-refresh.md)**。
+这是单独 opt-in 的本地索引写入能力，不是发送权限，也不会自动定时同步。
 
 在已完成隧道配置、DPAPI 密钥保存的同一 Windows 用户下，用**普通权限**终端执行：
 

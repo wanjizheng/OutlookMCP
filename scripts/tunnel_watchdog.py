@@ -55,9 +55,9 @@ class Recovery:
         return delay
 
 
-def child_command(enable_send):
+def child_command(enable_send, enable_refresh=False):
     args = [str(ROOT / ".venv/Scripts/python.exe"), str(ROOT / "scripts/setup_tunnel.py"), "run"]
-    return args + (["--enable-send"] if enable_send else [])
+    return args + (["--enable-send"] if enable_send else []) + (["--enable-refresh"] if enable_refresh else [])
 
 
 def terminate_tree(child):
@@ -72,6 +72,7 @@ def terminate_tree(child):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--enable-send", action="store_true")
+    parser.add_argument("--enable-refresh", action="store_true")
     args = parser.parse_args()
     if os.name != "nt":
         raise SystemExit("Native Windows is required")
@@ -106,7 +107,7 @@ def main():
     try:
         while True:
             (PRIVATE / "health.url").unlink(missing_ok=True)
-            child = subprocess.Popen(child_command(args.enable_send), cwd=ROOT,
+            child = subprocess.Popen(child_command(args.enable_send, args.enable_refresh), cwd=ROOT,
                                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                      stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
             logger.info("transport_started pid=%d restart=%d", child.pid, restarts)
@@ -119,6 +120,7 @@ def main():
                     previous = healthy
                 state = {"supervisor_pid": os.getpid(), "child_pid": child.pid,
                          "ready": healthy, "restarts": restarts, "enable_send": args.enable_send,
+                         "enable_refresh": args.enable_refresh,
                          "checked_at": time.time()}
                 temp = PRIVATE / "watchdog-status.tmp"
                 temp.write_text(json.dumps(state), encoding="utf-8")

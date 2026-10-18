@@ -300,16 +300,21 @@ def ingest(rows, conn):
     )
 
 
-def embed_pending(limit=200):
-    """Fill native-sync vectors locally; never called implicitly by MCP tools."""
+def embed_pending(limit=200, *, recent_hours=None):
+    """Fill local vectors; optional recent scope is used by bounded manual refresh."""
     if not 1 <= limit <= 100000:
         raise ValueError("Invalid embedding limit")
+    if recent_hours is not None and not 1 <= recent_hours <= 876000:
+        raise ValueError("Invalid recent embedding window")
     done = 0
     with connect(False) as c:
-        pending = c.execute(
-            "SELECT c.chunk_id,c.chunk_text FROM email_chunks c LEFT JOIN email_chunk_vectors v ON v.chunk_id=c.chunk_id WHERE v.chunk_id IS NULL ORDER BY c.chunk_id LIMIT ?",
-            (limit,),
-        ).fetchall()
+        sql = "SELECT c.chunk_id,c.chunk_text FROM email_chunks c LEFT JOIN email_chunk_vectors v ON v.chunk_id=c.chunk_id WHERE v.chunk_id IS NULL"
+        parameters = []
+        if recent_hours is not None:
+            sql += " AND julianday(c.received_time) >= julianday('now', ?)"
+            parameters.append(f"-{recent_hours} hours")
+        sql += " ORDER BY c.chunk_id " + ("DESC" if recent_hours is not None else "ASC") + " LIMIT ?"
+        pending = c.execute(sql, (*parameters, limit)).fetchall()
         for start in range(0, len(pending), 8):
             batch = pending[start : start + 8]
             vectors = embed([r["chunk_text"] for r in batch])
