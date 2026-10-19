@@ -427,3 +427,23 @@ after uncertain Send, and rejection of unsaved/read-only state before mutation.
 A throwing setter ensures existing account reassignment cannot recur. No real
 meeting write/send was performed during this diagnostic turn. Actual live sending
 remains unverified and requires a fresh concrete preview and human confirmation.
+
+Subsequent real-send acceptance: the user explicitly confirmed ONE fresh concrete
+retry after the new immutable preview. commit_calendar_action returned success,
+status=submitted_to_outlook, send_attempted=true, send_returned=true, sent=true and
+delivery_verified=false. No second attempt was made. Independent native reads
+found seven attendees on the intended occurrence and the original six on the next
+weekly occurrence; original subject/body/start/end/location matched the before
+snapshot exactly. Sent Items contained a matching IPM.Schedule.Meeting.Request,
+Sent=true, target included, with appointment properties matching the requested
+instance. Outbox showed no matching pending item. These are submission/sent-copy
+and local calendar evidence, not recipient delivery or server-wide atomic proof.
+An occurrence proxy's Saved flag was false after success, illustrating why that
+flag alone must not be used as evidence of either persistence or notification.
+
+The prior rejection lacked a phase/HRESULT; removing redundant existing-account
+assignment is a compatibility correction validated by the successful retry, not
+retrospective proof of the exact old failing member. No security policy, Outlook
+account settings or WSL runtime was changed. Windows and legacy GitHub CI passed
+for the implementation commit. All private IDs, recipients, body, sent timestamps,
+confirmation tokens and chat screenshots remain excluded from Git.
