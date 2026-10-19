@@ -17,6 +17,18 @@ calendar = (s / "outlook-calendar").read_text(encoding="utf-8-sig")
 a = calendar.index("\\$ns = \\$ol.GetNamespace")
 b = calendar.index("\nEOF\n", a)
 calendar = calendar[a:b].replace("\\$", "$")
+# Windows-only metadata: keep the OpenClaw wrapper's CLI and output unchanged.
+calendar = calendar.replace('    [void]$result.Add(@{', """    $isRecurringEvent = $false
+    try { $isRecurringEvent = [bool]$item.IsRecurring } catch {}
+    $occurrenceStartUtc = ''
+    try { $occurrenceStartUtc = [DateTime]::SpecifyKind($item.StartUTC,[DateTimeKind]::Utc).ToString('o') } catch {}
+    [void]$result.Add(@{""")
+calendar = calendar.replace('        EntryID   = $entryId', """        EntryID   = $entryId
+        StoreID = [string]$cal.StoreID
+        IsRecurring = $isRecurringEvent
+        EventScope = $(if ($isRecurringEvent) { 'occurrence' } else { 'single' })
+        OccurrenceStart = $(if ($isRecurringEvent) { $occurrenceStartUtc } else { '' })""")
+
 (ROOT / "scripts/calendar_library.ps1").write_text(
     "function Read-OutlookCalendar {\nparam($ol,[int]$DaysVal,[int]$TopVal,[int]$StartOffsetVal)\n"
     + calendar

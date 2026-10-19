@@ -90,3 +90,14 @@ with all recipients explicit and the exact plain-text preview as body. Inherited
 attachments are removed from the unsaved outgoing item; source mail is unchanged.
 No arbitrary attachment paths are accepted. Installed provider metadata is read-only;
 automatic Zoom-link creation remains unconfigured, not silently emulated.
+
+
+## Repeated-event retrieval repair
+Windows calendar listings must carry StoreID, recurrence scope and an offset-aware
+occurrence start. Opt-in tools can use an opaque bounded, expiring event_ref from
+the same listing rather than reconstructing long MAPI IDs. A reference pins one
+listed instance and must never broaden to the whole series. Explicit single plus
+occurrence_start is a safe alias of occurrence; series plus occurrence_start is
+rejected. Already-expanded occurrences/exceptions are verified directly rather
+than calling GetRecurrencePattern/GetOccurrence on them again. Default five tools,
+OpenClaw sources/signatures, confirmation rules and mailbox contents stay intact.

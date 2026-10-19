@@ -353,3 +353,17 @@ STDIO 仍只有五个只读工具。升级后运行
 超时或提交结果不确定时先检查 Outlook，不能自动重试。没有自建确认弹窗。
 `confirmation_test=true` 消耗预览令牌但不调用 Outlook、不发送、不修改日历，可用于验收。
 同步与搜索仍只读；没有开放删除邮件、任意命令、任意文件路径或附件上传。
+
+### 重复会议的单次操作与定位
+
+`list_calendar` 现在返回 `StoreID`、`IsRecurring`、`EventScope` 和带 UTC 时区的
+`OccurrenceStart`。启用了发送能力时，还返回短的 `event_ref` 和可直接使用的
+`read_parameters`。读取和准备修改应优先只传 `event_ref`，不再手工拼接长 MAPI ID；
+它固定对应列表中的那一次会议，不会自动扩大到整个系列。
+引用有效一小时，重启后失效；失效时重新列出日历。请勿与手写 ID、series 或其他开始时间混用。
+
+直接传 ID 仍兼容：`scope=occurrence` 加原实例的带时区开始时间；
+`scope=single` 同时提供明确 `occurrence_start` 也按该实例处理。
+`scope=series` 不允许同时提供实例开始时间。已展开的 occurrence/exception 会核对
+开始时间后直接读取，不再对它二次调用 GetOccurrence。修改整个系列仍必须明确选择，
+不能使用单次 `event_ref`。上述读取、定位和准备过程均不保存或发送会议。

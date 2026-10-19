@@ -11,6 +11,51 @@ from . import sending
 
 _pending = {}
 _lock = threading.Lock()
+_references = {}
+REFERENCE_TTL = 3600
+
+
+def remember_events(items):
+    """Pin one listed occurrence; no mailbox access and no series inference."""
+    sending._enabled()
+    now = time.monotonic()
+    with _lock:
+        for token in list(_references):
+            if now - _references[token][0] >= REFERENCE_TTL:
+                del _references[token]
+        for event in items:
+            if not event.get("EntryID") or not event.get("StoreID"):
+                continue
+            scope = event.get("EventScope")
+            start = event.get("OccurrenceStart", "")
+            if scope not in ("single", "occurrence") or (scope == "occurrence" and not start):
+                continue
+            if len(_references) >= 1000:
+                del _references[next(iter(_references))]
+            token = "event_" + secrets.token_urlsafe(18)
+            target = dict(entry_id=event["EntryID"], store_id=event["StoreID"], scope=scope, occurrence_start=start)
+            _references[token] = (now, target)
+            event["event_ref"] = token
+            event["read_parameters"] = dict(event_ref=token)
+    return items
+
+
+def target(entry_id, store_id, scope, occurrence_start, event_ref):
+    if not event_ref:
+        if scope == "single" and occurrence_start:
+            scope = "occurrence"
+        if scope == "series" and occurrence_start:
+            raise ValueError("Series cannot include an occurrence start")
+        return entry_id, store_id, scope, occurrence_start
+    if entry_id or store_id or occurrence_start or scope not in ("single", ""):
+        raise ValueError("Use event_ref alone; do not mix it with IDs or override its instance scope")
+    with _lock:
+        reference = _references.get(event_ref)
+    if reference is None or time.monotonic() - reference[0] >= REFERENCE_TTL:
+        raise ValueError("Event reference expired or unavailable; list calendar again")
+    value = reference[1]
+    return value["entry_id"], value["store_id"], value["scope"], value["occurrence_start"]
+
 
 
 def invoke(operation, **args):
@@ -43,7 +88,8 @@ def stamp(value):
     return parsed.astimezone(dt.timezone.utc)
 
 
-def read(entry_id, store_id, scope="single", occurrence_start=""):
+def read(entry_id="", store_id="", scope="single", occurrence_start="", event_ref=""):
+    entry_id, store_id, scope, occurrence_start = target(entry_id, store_id, scope, occurrence_start, event_ref)
     if not entry_id or not store_id or scope not in ("single", "occurrence", "series"):
         raise ValueError("Require event/store IDs and explicit scope")
     if scope == "occurrence":
@@ -53,7 +99,7 @@ def read(entry_id, store_id, scope="single", occurrence_start=""):
 
 def prepare(action, sender_account, subject="", body="", start="", end="", location="",
             required=None, optional=None, entry_id="", store_id="", scope="single", occurrence_start="",
-            add_attendees=None, remove_attendees=None):
+            add_attendees=None, remove_attendees=None, event_ref=""):
     sending._enabled()
     if action not in ("create", "update", "add_remove_attendees", "cancel", "accept", "tentative", "decline"):
         raise ValueError("Unsupported calendar action")
@@ -70,6 +116,9 @@ def prepare(action, sender_account, subject="", body="", start="", end="", locat
         raise ValueError("Cannot remove the organizer")
     if set(lists["add_attendees"]) & set(lists["remove_attendees"]):
         raise ValueError("Cannot add and remove the same attendee")
+    entry_id, store_id, scope, occurrence_start = target(entry_id, store_id, scope, occurrence_start, event_ref)
+    if action == "create" and event_ref:
+        raise ValueError("Creation cannot use an existing event reference")
     before = None
     if action == "create":
         validated = sending.prepare(sender_account, [sender_account], subject, body or "Meeting invitation")

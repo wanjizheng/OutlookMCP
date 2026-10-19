@@ -356,3 +356,42 @@ source IDs, account metadata and chat URLs stay under ignored artifacts only.
 Zoom link creation is not configured. Ordinary Outlook meeting invitations require
 no Zoom/Teams/Meet service. Existing links may be provided/preserved. No Outlook
 account mode, mailbox contents, RAG index or OpenClaw interfaces were changed.
+
+## Recheck of the real recurring meeting flow (2026-10-19)
+
+The earlier synthetic create preview was insufficient to prove existing recurring
+meeting edits. A fresh ordinary Chat test reproduced failure in read_calendar_event
+before preparation; no commit was called. The response also confused single with
+occurrence. A local native read using explicit occurrence succeeded, so the generic
+COM error alone does not establish a unique underlying cause.
+
+The repair adds Windows listing StoreID/recurrence/UTC-instance metadata, bounded
+one-hour opaque references pinning a listed instance, an enum scope schema, the
+narrow single-plus-explicit-start alias, and direct handling of already expanded
+occurrences/exceptions. References cannot override scope or broaden to series.
+Errors now distinguish ID resolution and instance resolution; read errors do not
+imply a send was attempted. OpenClaw runtime sources/signatures are unchanged.
+Generated Windows libraries and the compatibility test fixture remain reproducible.
+
+79-test full regression passed, plus the new MCP schema/reference dispatch test.
+Real Windows STDIO acceptance listed the target meeting, read it through event_ref,
+prepared one added attendee (six to seven), verified subject/body/start/end/location
+unchanged in the preview, and re-read an identical source snapshot. No commit,
+Save, Send or real invitation response was executed. Default five-tool live smoke
+and pip check passed. Windows background task was restarted; tunnel ready is true.
+
+Plugin permission was found set to Allow all and restored to Allow read-only tools
+(read without asking; ask before changes), consistent with the user's requirement.
+Fresh ordinary Chat end-to-end retest is recorded below after completion. Private
+meeting IDs, body/link material, diagnostics and screenshots are excluded from Git.
+
+Fresh ordinary Chat retest PASSED after background restart and plugin refresh:
+list_calendar returned the dated event_ref; read_calendar_event(event_ref=...) and
+prepare_calendar_action(event_ref=...) both succeeded for the intended occurrence.
+The preview retained all six attendees and existing title/time/body/location/link,
+adding only the requested person (preview total seven). Chat stopped before commit.
+A subsequent independent native read matched the original full snapshot exactly;
+live attendee count was still six. This establishes real recurring-event read and
+preparation acceptance, not actual Send/Save or write approval acceptance. No real
+write was authorized or performed. The prior generic failure was not hidden or
+reclassified as successful; the old synthetic-only evidence remains distinguished.

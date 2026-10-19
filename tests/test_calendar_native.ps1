@@ -1,4 +1,4 @@
-$ErrorActionPreference='Stop'
+﻿$ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot '..\scripts\calendar_actions.ps1')
 $env:OUTLOOK_MCP_ENABLE_SEND='1'
 $script:sends=0
@@ -38,6 +38,14 @@ $scopeRequest.occurrence_start='2026-10-21T14:00:00+01:00'
 try { Event $script:ns $scopeRequest;throw 'Expected occurrence mismatch' } catch {if ($_.Exception.Message -notlike '*Occurrence mismatch*') {throw}}
 $scopeRequest.scope='series'
 if ((Event $script:ns $scopeRequest).RecurrenceState -ne 1) {throw 'Wrong series'}
+# Already expanded occurrence/exception must not call GetRecurrencePattern again.
+$script:master=$script:occurrence
+$scopeRequest.scope='occurrence';$scopeRequest.occurrence_start='2026-10-20T14:00:00+01:00'
+if ((Event $script:ns $scopeRequest).RecurrenceState -ne 2) {throw 'Expanded occurrence failed'}
+$script:master.RecurrenceState=3
+if ((Event $script:ns $scopeRequest).RecurrenceState -ne 3) {throw 'Expanded exception failed'}
+$scopeRequest.scope='series'
+try {Event $script:ns $scopeRequest;throw 'Expected exception series rejection'} catch {if ($_.Exception.Message -notlike '*requires master EntryID*') {throw}}
 # Stale comparison must occur before any mutation/send.
 function Event($ns,$p) { return $script:item }
 function Snapshot($item) { return [ordered]@{subject='Changed';organizer_smtp='sender@example.invalid'} }

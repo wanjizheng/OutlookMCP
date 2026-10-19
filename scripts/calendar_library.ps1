@@ -315,6 +315,10 @@ foreach ($item in $restricted) {
     $recoveredFromMail = $false
     $mailSummary = New-EmptySummary
 
+    $isRecurringEvent = $false
+    try { $isRecurringEvent = [bool]$item.IsRecurring } catch {}
+    $occurrenceStartUtc = ''
+    try { $occurrenceStartUtc = [DateTime]::SpecifyKind($item.StartUTC,[DateTimeKind]::Utc).ToString('o') } catch {}
     [void]$result.Add(@{
         Subject   = $subjectVal
         Start     = $eventStartIso
@@ -322,6 +326,10 @@ foreach ($item in $restricted) {
         Location  = $locationVal
         Organizer = $organizer
         EntryID   = $entryId
+        StoreID = [string]$cal.StoreID
+        IsRecurring = $isRecurringEvent
+        EventScope = $(if ($isRecurringEvent) { 'occurrence' } else { 'single' })
+        OccurrenceStart = $(if ($isRecurringEvent) { $occurrenceStartUtc } else { '' })
         Body      = $body
         MyResponseStatus = $myResponseStatus
         MyResponseStatusCode = $myResponseStatusCode

@@ -14,7 +14,8 @@ function Smtp($recipient) {
     return [string]$address.Address
 }
 function Event($ns, $p) {
-    $item = $ns.GetItemFromID($p.entry_id, $p.store_id)
+    try { $item = $ns.GetItemFromID($p.entry_id, $p.store_id) }
+    catch { throw ('Resolve event ID failed (HRESULT ' + $_.Exception.HResult + '): ' + $_.Exception.Message) }
     if ($item.Class -eq 53) {
         $item=$item.GetAssociatedAppointment($false)
         if ($null -eq $item) { throw 'Invitation has no existing calendar item; process it in Outlook first' }
@@ -24,7 +25,14 @@ function Event($ns, $p) {
         if ($p.scope -eq 'single') { throw 'Recurring event requires occurrence or series scope' }
         if ($p.scope -eq 'occurrence') {
             $date = [DateTimeOffset]::Parse($p.occurrence_start).LocalDateTime
-            $item = $item.GetRecurrencePattern().GetOccurrence($date)
+            # Expanded occurrences/exceptions already represent one instance.
+            # GetRecurrencePattern on such objects can fail in real Outlook.
+            if ($item.RecurrenceState -eq 1) {
+                try { $item = $item.GetRecurrencePattern().GetOccurrence($date) }
+                catch { throw ('Resolve requested occurrence failed (HRESULT ' + $_.Exception.HResult + '): ' + $_.Exception.Message) }
+            } elseif ($item.RecurrenceState -notin @(2,3)) {
+                throw 'Unexpected recurring event state; list calendar again'
+            }
             if ([Math]::Abs(($item.StartUTC - [DateTimeOffset]::Parse($p.occurrence_start).UtcDateTime).TotalSeconds) -gt 1) { throw 'Occurrence mismatch' }
         } elseif ($item.RecurrenceState -ne 1) { throw 'Series scope requires master EntryID' }
     } elseif ($p.scope -ne 'single') { throw 'Non-recurring event requires single scope' }
@@ -123,5 +131,9 @@ function Run($request) {
 }
 if ($MyInvocation.InvocationName -ne '.') {
     try { $request=[Console]::In.ReadToEnd() | ConvertFrom-Json; Run $request | ConvertTo-Json -Depth 20 -Compress }
-    catch { @{error=($_.Exception.Message + '; inspect Outlook before any retry.')} | ConvertTo-Json -Compress; exit 1 }
+    catch {
+        $suffix='; read-only operation, no mailbox write requested.'
+        if ($request.operation -eq 'commit') { $suffix='; outcome may be uncertain, inspect Outlook before any retry.' }
+        @{error=($_.Exception.Message + $suffix)} | ConvertTo-Json -Compress; exit 1
+    }
 }

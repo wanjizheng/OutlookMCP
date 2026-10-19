@@ -1,4 +1,5 @@
 import os
+from typing import Literal
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
@@ -61,7 +62,11 @@ def read_email(
 @mcp.tool(annotations=READ)
 def list_calendar(days: int = 7, top: int = 100, start_offset: int = 0) -> dict:
     """Read live calendar events overlapping a local-day window, including recurring events. No writes."""
-    return bridge.calendar(days, top, start_offset)
+    result = bridge.calendar(days, top, start_offset)
+    if os.environ.get("OUTLOOK_MCP_ENABLE_SEND") == "1":
+        from . import calendar_actions
+        calendar_actions.remember_events(result["items"])
+    return result
 
 
 def register_sending(server):
@@ -132,14 +137,14 @@ def register_calendar(server):
         return actions.invoke("resolve", query=query)
 
     @server.tool(annotations=READ)
-    def read_calendar_event(entry_id: str, store_id: str, scope: str = "single", occurrence_start: str = "") -> dict:
-        """Read full event and attendees. Recurring meetings require explicit occurrence (ISO offset start) or series scope; series needs master ID."""
-        return actions.read(entry_id, store_id, scope, occurrence_start)
+    def read_calendar_event(entry_id: str = "", store_id: str = "", scope: Literal["single", "occurrence", "series"] = "single", occurrence_start: str = "", event_ref: str = "") -> dict:
+        """Read full event and attendees. Prefer event_ref from list_calendar alone; it pins that listed occurrence. Otherwise supply IDs and scope=occurrence with ISO offset start, or scope=series with master ID."""
+        return actions.read(entry_id, store_id, scope, occurrence_start, event_ref)
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=False, openWorldHint=False))
-    def prepare_calendar_action(action: str, sender_account: str, subject: str = "", body: str = "", start: str = "", end: str = "", location: str = "", required: list[str] | None = None, optional: list[str] | None = None, entry_id: str = "", store_id: str = "", scope: str = "single", occurrence_start: str = "", add_attendees: list[str] | None = None, remove_attendees: list[str] | None = None) -> dict:
-        """Prepare create/update/add_remove_attendees/cancel/accept/tentative/decline. No writes. Show full preview and STOP for subsequent human approval. Creation uses ISO offset start/end; changes preserve body/time/links and existing attendees. Updates notify ALL attendees. No automatic Zoom links."""
-        return actions.prepare(action, sender_account, subject, body, start, end, location, required, optional, entry_id, store_id, scope, occurrence_start, add_attendees, remove_attendees)
+    def prepare_calendar_action(action: str, sender_account: str, subject: str = "", body: str = "", start: str = "", end: str = "", location: str = "", required: list[str] | None = None, optional: list[str] | None = None, entry_id: str = "", store_id: str = "", scope: Literal["single", "occurrence", "series"] = "single", occurrence_start: str = "", add_attendees: list[str] | None = None, remove_attendees: list[str] | None = None, event_ref: str = "") -> dict:
+        """Prepare create/update/add_remove_attendees/cancel/accept/tentative/decline. For existing events prefer event_ref alone from list_calendar; it pins one occurrence. No writes. Show full preview and STOP for subsequent human approval. Creation uses ISO offset start/end; changes preserve body/time/links and existing attendees. Updates notify ALL attendees. No automatic Zoom links."""
+        return actions.prepare(action, sender_account, subject, body, start, end, location, required, optional, entry_id, store_id, scope, occurrence_start, add_attendees, remove_attendees, event_ref)
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True))
     def commit_calendar_action(preparation_id: str, confirmation_test: bool = False) -> dict:
