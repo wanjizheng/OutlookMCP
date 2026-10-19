@@ -367,3 +367,24 @@ STDIO 仍只有五个只读工具。升级后运行
 `scope=series` 不允许同时提供实例开始时间。已展开的 occurrence/exception 会核对
 开始时间后直接读取，不再对它二次调用 GetOccurrence。修改整个系列仍必须明确选择，
 不能使用单次 `event_ref`。上述读取、定位和准备过程均不保存或发送会议。
+
+### 提交报错与“参会人短暂出现”的判断
+
+读到参会人不代表持久保存，更不代表发送成功；即使 `saved=true`，也不能据此
+声称更新已发送或对方已收到。发生提交错误后，不要自动重复提交或更换凭证绕过确认。
+
+新版错误保留 `source=windows_outlook`、`phase`、`hresult`、`mutation_attempted`、
+`send_attempted`、`send_returned` 和 `discard`：
+- `rejected_before_mutation`：本次操作还没有尝试改动。
+- `failed_after_mutation` 且 `send_attempted=false`：尚未调用 Send，可能有临时对象修改；
+  `close_discard_returned` 仅说明已调用并返回 Close(olDiscard)，不能宣称服务端事务回滚。
+- `send_outcome_unknown`：已尝试调用 Send，但未正常返回，先检查发送证据，不能重试。
+- `submitted_result_incomplete`：Send 已返回，但后续结果读取出错，同样不能重发。
+
+后台先检查对象 MAPI 修改权限、账户一致性、未保存编辑和已打开的会议窗口。
+已有会议继承的发送账户只验证、不重新设置。发送前失败时只尝试丢弃本次拥有的
+未保存对象；Send 一旦开始或 Respond 已可能产生日历副作用，就不声称能自动回滚。
+这些保护不修改 Outlook 的安全策略，也不关闭用户已打开的编辑窗口。
+
+排查必须保留原始英文报错，区分 Outlook COM 拒绝与 ChatGPT 审批拒绝；
+不能把所有 `INVALID_ARGUMENT` 包装错误都概括成“你没点 Allow”。

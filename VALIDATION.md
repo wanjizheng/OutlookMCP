@@ -395,3 +395,35 @@ live attendee count was still six. This establishes real recurring-event read an
 preparation acceptance, not actual Send/Save or write approval acceptance. No real
 write was authorized or performed. The prior generic failure was not hidden or
 reclassified as successful; the old synthetic-only evidence remains distinguished.
+
+## Actual Outlook submission rejection investigation (2026-10-19)
+
+The user's original separate chat was located and its error evidence retrieved.
+It reported Windows Outlook's native "You don't have appropriate permission to
+perform this operation", wrapped as INVALID_ARGUMENT. The old response omitted
+HRESULT and operation stage, so the exact historical failing COM member cannot be
+established. This is not evidence that the user failed to approve ChatGPT's card.
+
+Independent native reads found both requested occurrences still had the original
+six attendees and the original modification timestamp; the target attendee was
+absent. A bounded read of the primary Sent Items and Outbox (up to 1,000 recent
+rows per folder, two-day window) found no matching meeting update. This is local
+cached-view evidence, not server-wide proof of non-delivery. PR_ACCESS on the
+actual event was 7 (includes modify), calendar was 63; read SendingAccount matched
+the requested account. Unsaved throwaway-object property probes (no Save/Send)
+worked. None of these tests proves a real Send would succeed.
+
+Removed redundant reassignment of an existing event's inherited sending account,
+validated access/account/clean closed state before modifications, and preserved
+stage/HRESULT/exception type and mutation/send flags through the Python boundary.
+Pre-send failures attempt Close(olDiscard) only on this operation's owned unsaved
+item; a returned discard call does not prove a transactional server rollback.
+After Send starts or Respond can have calendar side effects, no rollback or retry
+is claimed. Returned snapshots include Saved/status, explicitly not send evidence.
+
+82-test regression and targeted native mocks passed. Mocks inject 0x80070005 before
+Send and at Send, verifying phase preservation, pre-send discard, no discard/retry
+after uncertain Send, and rejection of unsaved/read-only state before mutation.
+A throwing setter ensures existing account reassignment cannot recur. No real
+meeting write/send was performed during this diagnostic turn. Actual live sending
+remains unverified and requires a fresh concrete preview and human confirmation.

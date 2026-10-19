@@ -6,7 +6,9 @@ $script:added=@()
 $script:recipients=[pscustomobject]@{Count=0}
 $script:recipients | Add-Member ScriptMethod Add { param($address) $script:added += $address; return [pscustomobject]@{Type=0} }
 $script:recipients | Add-Member ScriptMethod ResolveAll { return $true }
-$script:item=[pscustomobject]@{SendUsingAccount=$null;MeetingStatus=0;Subject='';Body='';Location='';ForceUpdateToAllAttendees=$false;StartUTC=[datetime]::MinValue;EndUTC=[datetime]::MinValue;Recipients=$script:recipients;EntryID='synthetic'}
+$script:accessor=[pscustomobject]@{}
+$script:accessor | Add-Member ScriptMethod GetProperty {param($name) return 7}
+$script:item=[pscustomobject]@{PropertyAccessor=$script:accessor;Saved=$true;SendUsingAccount=$null;MeetingStatus=0;Subject='';Body='';Location='';ForceUpdateToAllAttendees=$false;StartUTC=[datetime]::MinValue;EndUTC=[datetime]::MinValue;Recipients=$script:recipients;EntryID='synthetic'}
 $script:item | Add-Member ScriptMethod Send { $script:sends++ }
 $items=[pscustomobject]@{}
 $items | Add-Member ScriptMethod Add { param($type) if ($type -ne 'IPM.Appointment') {throw 'Wrong type'};return $script:item }

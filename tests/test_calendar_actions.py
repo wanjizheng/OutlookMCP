@@ -1,4 +1,5 @@
 import os
+import json
 import unittest
 from unittest.mock import patch
 from outlook_mcp import calendar_actions as c
@@ -92,3 +93,20 @@ class CalendarActionsTests(unittest.TestCase):
                 await server.call_tool('read_calendar_event',dict(event_ref=row['event_ref']))
                 self.assertEqual(invoke.call_args.kwargs['scope'],'occurrence')
         asyncio.run(run())
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows native failure tests')
+    def test_native_failure_phases_and_discard(self):
+        import subprocess
+        from pathlib import Path
+        root=Path(__file__).resolve().parents[1]
+        exe=Path(os.environ['SystemRoot'])/'System32/WindowsPowerShell/v1.0/powershell.exe'
+        result=subprocess.run([str(exe),'-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',str(root/'tests/test_calendar_failures_native.ps1')],capture_output=True,timeout=30)
+        self.assertEqual(result.returncode,0,result.stdout.decode('utf-8',errors='replace')+result.stderr.decode('utf-8',errors='replace'))
+
+    @unittest.skipUnless(os.name == "nt", "Windows bridge")
+    def test_native_failure_metadata_is_not_discarded(self):
+        import subprocess
+        failure=dict(error='Permission denied',phase='send_invitation',hresult='0x80070005',send_attempted=True,send_returned=False)
+        with patch.object(c.subprocess,'run',return_value=subprocess.CompletedProcess([],1,json.dumps(failure).encode(),b'')):
+            with self.assertRaisesRegex(RuntimeError,'send_invitation'):
+                c.invoke('commit',payload={})

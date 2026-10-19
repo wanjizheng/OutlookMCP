@@ -73,6 +73,8 @@ def invoke(operation, **args):
             raise RuntimeError("Outcome uncertain; inspect Outlook before retrying") from exc
     data = json.loads(result.stdout.decode("utf-8-sig"))
     if result.returncode or "error" in data:
+        if operation == "commit":
+            raise RuntimeError("Windows Outlook submission failed: " + json.dumps(data, ensure_ascii=False))
         raise RuntimeError(data.get("error", "Outlook operation failed; inspect before retry"))
     return data
 

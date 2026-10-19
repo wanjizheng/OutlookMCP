@@ -101,3 +101,16 @@ occurrence_start is a safe alias of occurrence; series plus occurrence_start is
 rejected. Already-expanded occurrences/exceptions are verified directly rather
 than calling GetRecurrencePattern/GetOccurrence on them again. Default five tools,
 OpenClaw sources/signatures, confirmation rules and mailbox contents stay intact.
+
+
+## Submission failure diagnosis and unsaved-state handling
+Native commit errors must report the exact stage, HRESULT, mutation-attempt and
+send-attempt/return flags. Outlook permission errors must not be labeled ChatGPT
+approval failures. Existing events keep their validated SendUsingAccount; never
+reassign it after modifying recipients. Reject unsaved/open-inspector event state
+before editing. On pre-send failure, discard only this operation's owned unsaved
+item; report discard outcome without claiming transactional rollback. Never discard
+or retry after Send is attempted. Invitation responses can have calendar side effects
+inside Respond, so they are not declared rolled back. A live attendee list, or Saved,
+does not prove an invitation was submitted/delivered. No real retry is authorized
+by this diagnostic task; tests must use mocks and read-only evidence.
