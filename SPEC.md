@@ -7,10 +7,10 @@ human confirmation. No WSL, Graph login or cloud mailbox copy is required.
 Flows: search/read -> compose in conversation -> prepare immutable message ->
 show recipients, sender, subject and full body -> human confirmation -> submit
 to Outlook. Cancel/timeout/absent desktop must fail closed. No automatic retries
-after submission. No mailbox drafts, deletion, mark-read or meeting writes.
+after submission. No mailbox drafts, deletion or mark-read. Calendar writes are limited to the confirmed operations below.
 
 Default STDIO remains five read-only tools. Sending is separately opted in with
-OUTLOOK_MCP_ENABLE_SEND=1, adding prepare_email and send_prepared_email. The
+OUTLOOK_MCP_ENABLE_SEND=1, adding the email and routine calendar preparation/commit tools below. The
 ChatGPT must stop after the preview and obtain explicit approval in a subsequent
 user turn before calling the non-idempotent write tool. The user explicitly
 chose no custom desktop window. Reuse the existing Windows PowerShell sender;
@@ -73,3 +73,20 @@ with a 180-second model-call timeout per batch. Existing CLI batch and
 query timeout defaults remain unchanged. A narrow local vector-ID index prevents
 status counting from scanning embedding blobs. New email inserts avoid an
 unnecessary full FTS deletion scan; existing-row updates retain full cleanup.
+
+## Confirmed routine calendar operations (2026-10-19)
+The user authorizes opt-in native calendar creation, attendee updates, cancellation
+and invitation responses. Ordinary Outlook invitations do not require an online
+meeting provider. Preparation is read-only, freezes the complete event and checks
+its version again before committing. Existing recurring events require explicit
+occurrence or series scope. Every commit requires full preview and subsequent
+human approval, uses one expiring token, and never retries. Confirmation tests
+must not call Outlook. Default five tools and OpenClaw interfaces stay unchanged.
+No real meeting/email may be sent during automated acceptance. Installed Zoom
+add-ins alone do not establish a supported API for creating links.
+
+Confirmed email responses use Outlook Reply/ReplyAll/Forward only after approval,
+with all recipients explicit and the exact plain-text preview as body. Inherited
+attachments are removed from the unsaved outgoing item; source mail is unchanged.
+No arbitrary attachment paths are accepted. Installed provider metadata is read-only;
+automatic Zoom-link creation remains unconfigured, not silently emulated.

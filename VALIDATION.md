@@ -332,3 +332,27 @@ incremental watermark advanced. The terminal status correctly remained partial
 because historical coverage and vector backlog are unfinished. This is evidence
 of working bounded vector continuation, not a claim that every vector/history
 record is complete. The source and model ran as native Windows processes.
+
+## 2026-10-19 confirmed routine Outlook operations
+
+Native Windows regression: 76 tests passed. Additional native PowerShell mocks
+exercise create/update/cancel and invitation responses, explicit recipient roles,
+UTC conversion, selected sending account, recurring occurrence/series targeting,
+stale-preview rejection and single submission. Reply/reply-all/forward native
+mocks verify source version and exact approved text/account. No tests send real
+mail, invitations or responses. Default live STDIO smoke passed all five read-only
+tools and rejected unknown writes. Generated compatibility libraries are unchanged;
+pip check passed. Real native read of an existing calendar item succeeded without
+Save/Send. The Windows scheduled backend was restarted with both existing opt-ins;
+private tunnel readyz reports ready.
+
+Ordinary Chat plugin refresh exposes 16 tools (12 read/preparation, 4 writes).
+A real ordinary Chat call to prepare_calendar_action created the complete synthetic
+meeting preview and stopped for subsequent approval. Commit acceptance is pending
+human confirmation of the explicitly non-sending confirmation_test=true flow;
+no real calendar write or email/invitation send is claimed. Private screenshots,
+source IDs, account metadata and chat URLs stay under ignored artifacts only.
+
+Zoom link creation is not configured. Ordinary Outlook meeting invitations require
+no Zoom/Teams/Meet service. Existing links may be provided/preserved. No Outlook
+account mode, mailbox contents, RAG index or OpenClaw interfaces were changed.

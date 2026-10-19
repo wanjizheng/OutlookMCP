@@ -80,7 +80,7 @@ def send(preparation_id, *, confirmation_test=False):
     try:
         result = subprocess.run(
             [str(exe), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-             "-File", str(ROOT / "scripts/send_prepared.ps1")], cwd=ROOT,
+             "-File", str(ROOT / ("scripts/mail_response.ps1" if "source" in payload else "scripts/send_prepared.ps1"))], cwd=ROOT,
             input=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             capture_output=True, timeout=90,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
@@ -90,3 +90,24 @@ def send(preparation_id, *, confirmation_test=False):
         return json.loads(result.stdout.decode("utf-8-sig"))
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError("Send outcome unknown after timeout. Check Outlook before preparing another message.") from exc
+
+
+def prepare_response(mode, entry_id, store_id, sender_account, to, body, cc=None):
+    """Native threading with explicit recipients; forwarded attachments excluded."""
+    _enabled()
+    if mode not in ("reply", "reply_all", "forward") or not entry_id or not store_id:
+        raise ValueError("Require reply/reply_all/forward and source IDs")
+    from . import calendar_actions
+    source = calendar_actions.invoke("mail_read", entry_id=entry_id, store_id=store_id)
+    if len(source["body"]) > 200000:
+        raise ValueError("Source message too large for complete preview")
+    subject = ("FW: " if mode == "forward" else "RE: ") + source["subject"]
+    result = prepare(sender_account, to, subject[:255], body, cc)
+    with _lock:
+        created, frozen = _pending[result["preparation_id"]]
+        payload = json.loads(frozen)
+        payload.update(source=source, mode=mode)
+        _pending[result["preparation_id"]] = (created, json.dumps(payload, ensure_ascii=False))
+    result["message"] = payload
+    result["note"] = "Plain text body is exactly the preview. Original attachments are NOT forwarded. Recipients are exactly those shown; reply_all requires all intended recipients explicitly."
+    return result

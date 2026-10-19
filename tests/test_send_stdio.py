@@ -23,7 +23,7 @@ class SendStdioTests(unittest.TestCase):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     tools = {t.name: t for t in (await session.list_tools()).tools}
-                    self.assertEqual(len(tools), 7)
+                    self.assertEqual(len(tools), 13)
                     self.assertFalse(tools["send_prepared_email"].annotations.readOnlyHint)
                     preview = await session.call_tool("prepare_email", {
                         "sender_account": "sender@example.invalid", "to": ["recipient@example.invalid"],
@@ -45,4 +45,20 @@ class SendStdioTests(unittest.TestCase):
                     replay = await session.call_tool("send_prepared_email", {
                         "preparation_id": data["preparation_id"], "confirmation_test": True})
                     self.assertTrue(replay.isError)
+                    calendar_preview = await session.call_tool("prepare_calendar_action", {
+                        "action":"create", "sender_account":"sender@example.invalid", "subject":"NO SEND calendar test",
+                        "body":"Synthetic only", "start":"2026-10-20T14:00:00+01:00", "end":"2026-10-20T15:00:00+01:00",
+                        "required":["recipient@example.invalid"]})
+                    self.assertFalse(calendar_preview.isError)
+                    cp = calendar_preview.structuredContent or json.loads(calendar_preview.content[0].text)
+                    self.assertIn("STOP",cp["next_step"])
+                    self.assertFalse(tools["commit_calendar_action"].annotations.readOnlyHint)
+                    cr = await session.call_tool("commit_calendar_action", {"preparation_id":cp["preparation_id"],"confirmation_test":True})
+                    self.assertFalse(cr.isError)
+                    result=cr.structuredContent or json.loads(cr.content[0].text)
+                    self.assertFalse(result["sent"])
+                    self.assertEqual(result["status"],"chat_confirmation_test_passed")
+                    replay=await session.call_tool("commit_calendar_action", {"preparation_id":cp["preparation_id"],"confirmation_test":True})
+                    self.assertTrue(replay.isError)
+
         asyncio.run(asyncio.wait_for(check(), timeout=30))

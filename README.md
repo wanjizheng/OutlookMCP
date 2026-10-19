@@ -51,3 +51,9 @@ Code and dependencies live in this checkout. Personal index files are under `dat
 This project reuses the fixed Outlook scripts, existing email RAG SQLite/chunk schema, and local GGUF embedding implementation. Linux/OpenClaw compatibility sources are under `compat/`; the native server never imports their Linux runtime.
 
 Native `sync` also extracts new PDF, DOCX, PPTX, XLSX, CSV, TXT and Markdown attachments into the local index by default. Raw attachments are temporary; extraction limits, explicit skipped/error states and history backfill instructions are in [INSTALL.md](INSTALL.md#新增附件文本提取windows-原生). This administrative feature adds no MCP write/export tools and no WSL dependency.
+
+Native opt-in routine operations now include confirmed email replies/forwards and
+ordinary Outlook invitations, attendee updates, meeting field edits/cancellation,
+and invitation responses. See [installation and operation guide](INSTALL.md#outlook-日常操作邮件与普通会议邀请).
+Default read-only tools and OpenClaw CLI remain unchanged. Automatic Zoom link
+creation is not configured; ordinary invitations need no online meeting provider.

@@ -22,3 +22,6 @@ Preserve other client settings and OpenClaw CLI signatures. Run the regression s
 Do not stop the user's ChatGPT app or other chats to force a reload. The user can reload MCP servers or start a new local chat if live reload is unavailable.
 
 Changes to compat sources must be followed by `scripts/build_bridge.py`; generated Windows libraries are committed and checked for reproducibility. The Windows backend must not import the Linux-only legacy email_rag.py.
+
+User-authorized extension: confirmed routine calendar writes described in SPEC.md
+supersede the earlier meeting-write prohibition. All other restrictions remain.

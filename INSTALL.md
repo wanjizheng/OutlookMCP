@@ -319,3 +319,37 @@ Get-Content artifacts\tunnel-client\watchdog.log -Tail 20
 [手动同步说明](docs/manual-refresh.md)。后台仍为 Windows 原生，不依赖 WSL；
 发送确认要求不变。上面的旧 CLI `--hours 72` 示例是显式窗口命令，不代表新版
 ChatGPT “更新 RAG”工具的行为。
+
+## Outlook 日常操作：邮件与普通会议邀请
+
+Windows 后台已使用 `--enable-send` 时，新版本同时开放会议工具；默认未启用发送的
+STDIO 仍只有五个只读工具。升级后运行
+`powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/autostart.ps1 -Action Restart`，
+再在 ChatGPT 的 OutlookMCP Windows 设置中选择 **Refresh tools**，开启新对话。
+保持每次写操作询问，不选择 Always allow。
+
+- `outlook_capabilities`：读取发送账户、Store ID、已安装插件状态。
+- `resolve_outlook_contact`：解析联系人，歧义时要求明确地址。
+- `prepare_email` / `send_prepared_email`：普通文本邮件，包括 CC/BCC。
+- `prepare_email_response`：reply、reply_all、forward；明确给出全部收件人和正文，
+  后续仍用 `send_prepared_email`。保留原邮件会话关系，**不复制原附件或自动追加引用正文**。
+- `read_calendar_event`：完整读取会议及参会人。
+- `prepare_calendar_action`：create（普通邀请）、update（主题/正文/时间/地点）、
+  add_remove_attendees、cancel、accept、tentative、decline。
+- `commit_calendar_action`：仅在完整预览后、下一轮用户明确确认时提交一次。
+
+例如：“创建明天14:00–15:00的普通 Outlook meeting invitation，先给我预览”。
+时间必须包含 UTC 偏移（英国冬夏令时需按会议日期确定）。普通邀请不需要 Zoom、Teams
+或 Google Meet 链接；可以把已有真实链接填入正文和地点。当前**未配置自动创建 Zoom 链接**，
+安装了会议插件也不等于存在可调用的授权 API。
+
+修改已有会议需要 Entry ID、Store ID；重复会议必须明确 occurrence（提供原始开始时间）
+或 series（主事件 ID）。新增会议暂不创建重复规则；整个系列的时间修改暂不支持，
+请选择单次 occurrence。update 中空字符串表示保留原字段，不能用于清空字段。
+添加/移除参会人保留其他人及角色、时间、正文和原链接；更新/取消会通知全部参会人。
+仅组织者能修改/取消，受邀者可确认接受/暂定/拒绝。
+
+每个预览有效10分钟，仅能尝试一次。提交前重新核对会议/邮件版本；内容有变化时重新预览。
+超时或提交结果不确定时先检查 Outlook，不能自动重试。没有自建确认弹窗。
+`confirmation_test=true` 消耗预览令牌但不调用 Outlook、不发送、不修改日历，可用于验收。
+同步与搜索仍只读；没有开放删除邮件、任意命令、任意文件路径或附件上传。
